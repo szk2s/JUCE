@@ -42,5 +42,6 @@ namespace juce
 #include "hashing/juce_MD5.cpp"
 #include "hashing/juce_SHA256.cpp"
 #include "hashing/juce_Whirlpool.cpp"
+#include "hashing/juce_GoldenSHA.cpp"
 
 }
