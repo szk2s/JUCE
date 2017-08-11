@@ -344,10 +344,6 @@ public:
         const IODeviceType type;
         AudioProcessorGraph* graph;
 
-        //==============================================================================
-        template <typename floatType>
-        void processAudio (AudioBuffer<floatType>& buffer, MidiBuffer& midiMessages);
-
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioGraphIOProcessor)
     };
 
@@ -379,27 +375,16 @@ public:
 
 private:
     //==============================================================================
-    template <typename floatType>
-    void processAudio (AudioBuffer<floatType>& buffer, MidiBuffer& midiMessages);
-
-    template <typename floatType>
-    void sliceAndProcess (AudioBuffer<floatType>& buffer, MidiBuffer& midiMessages);
-
-    //==============================================================================
     ReferenceCountedArray<Node> nodes;
     OwnedArray<Connection> connections;
-    uint32 lastNodeId;
-    OwnedArray<MidiBuffer> midiBuffers;
+    uint32 lastNodeId = 0;
 
-    struct RenderSequence;
-    ScopedPointer<RenderSequence> renderSequence;
+    struct RenderSequenceFloat;
+    struct RenderSequenceDouble;
+    ScopedPointer<RenderSequenceFloat> renderSequenceFloat;
+    ScopedPointer<RenderSequenceDouble> renderSequenceDouble;
 
     friend class AudioGraphIOProcessor;
-    struct AudioProcessorGraphBufferHelpers;
-    ScopedPointer<AudioProcessorGraphBufferHelpers> audioBuffers;
-
-    MidiBuffer* currentMidiInputBuffer;
-    MidiBuffer currentMidiOutputBuffer;
 
     bool isPrepared = false;
 
