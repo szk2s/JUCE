@@ -62,7 +62,7 @@ struct GraphRenderSequence
     void perform (AudioBuffer<FloatType>& buffer, MidiBuffer& midiMessages)
     {
         auto numSamples = buffer.getNumSamples();
-        auto maxSamples = renderingBuffer.getNumSamples() / 3;
+        auto maxSamples = renderingBuffer.getNumSamples();
 
         if (numSamples > maxSamples)
         {
@@ -214,7 +214,7 @@ private:
     //==============================================================================
     struct DelayChannelOp  : public RenderingOp
     {
-        DelayChannelOp (const int chan, const int delaySize)
+        DelayChannelOp (int chan, int delaySize)
             : channel (chan),
               bufferSize (delaySize + 1),
               writeIndex (delaySize)
@@ -250,7 +250,7 @@ private:
                    const Array<int>& audioChannelsUsed,
                    int totalNumChans, int midiBuffer)
             : node (n),
-              processor (n->getProcessor()),
+              processor (*n->getProcessor()),
               audioChannelsToUse (audioChannelsUsed),
               totalChans (jmax (1, totalNumChans)),
               midiBufferToUse (midiBuffer)
@@ -268,13 +268,13 @@ private:
 
             AudioBuffer<FloatType> buffer (audioChannels, totalChans, c.numSamples);
 
-            if (processor->isSuspended())
+            if (processor.isSuspended())
             {
                 buffer.clear();
             }
             else
             {
-                ScopedLock lock (processor->getCallbackLock());
+                ScopedLock lock (processor.getCallbackLock());
 
                 callProcess (buffer, c.midiBuffers[midiBufferToUse]);
             }
@@ -282,33 +282,38 @@ private:
 
         void callProcess (AudioBuffer<float>& buffer, MidiBuffer& midiMessages)
         {
-            processor->processBlock (buffer, midiMessages);
+            if (processor.isUsingDoublePrecision())
+            {
+                tempBufferDouble.makeCopyOf (buffer, true);
+                processor.processBlock (tempBufferDouble, midiMessages);
+                buffer.makeCopyOf (tempBufferDouble, true);
+            }
+            else
+            {
+                processor.processBlock (buffer, midiMessages);
+            }
         }
 
         void callProcess (AudioBuffer<double>& buffer, MidiBuffer& midiMessages)
         {
-            if (processor->isUsingDoublePrecision())
+            if (processor.isUsingDoublePrecision())
             {
-                processor->processBlock (buffer, midiMessages);
+                processor.processBlock (buffer, midiMessages);
             }
             else
             {
-                // if the processor is in single precision mode but the graph in double
-                // precision then we need to convert between buffer formats. Note, that
-                // this will only happen if the processor does not support double
-                // precision processing.
-                tempBuffer.makeCopyOf (buffer, true);
-                processor->processBlock (tempBuffer, midiMessages);
-                buffer.makeCopyOf (tempBuffer, true);
+                tempBufferFloat.makeCopyOf (buffer, true);
+                processor.processBlock (tempBufferFloat, midiMessages);
+                buffer.makeCopyOf (tempBufferFloat, true);
             }
         }
 
         const AudioProcessorGraph::Node::Ptr node;
-        AudioProcessor* const processor;
+        AudioProcessor& processor;
 
         Array<int> audioChannelsToUse;
         HeapBlock<FloatType*> audioChannels;
-        AudioBuffer<float> tempBuffer;
+        AudioBuffer<float> tempBufferFloat, tempBufferDouble;
         const int totalChans, midiBufferToUse;
 
         JUCE_DECLARE_NON_COPYABLE (ProcessOp)
