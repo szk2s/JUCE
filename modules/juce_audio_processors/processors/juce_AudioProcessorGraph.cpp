@@ -453,10 +453,8 @@ struct RenderSequenceBuilder
             Array<NodeID> sourceNodes;
             Array<int> sourceOutputChans;
 
-            for (int i = graph.getNumConnections(); --i >= 0;)
+            for (auto* c : graph.getConnections())
             {
-                auto* c = graph.getConnection (i);
-
                 if (c->destNodeId == node.nodeId && c->destChannelIndex == inputChan)
                 {
                     sourceNodes.add (c->sourceNodeId);
@@ -736,16 +734,14 @@ struct RenderSequenceBuilder
             midiNodeIds.add (freeNodeID());
             return midiNodeIds.size() - 1;
         }
-        else
-        {
-            for (int i = 1; i < nodeIds.size(); ++i)
-                if (nodeIds.getUnchecked(i) == freeNodeID())
-                    return i;
 
-            nodeIds.add (freeNodeID());
-            channels.add (0);
-            return nodeIds.size() - 1;
-        }
+        for (int i = 1; i < nodeIds.size(); ++i)
+            if (nodeIds.getUnchecked(i) == freeNodeID())
+                return i;
+
+        nodeIds.add (freeNodeID());
+        channels.add (0);
+        return nodeIds.size() - 1;
     }
 
     int getReadOnlyEmptyBuffer() const noexcept
@@ -850,7 +846,8 @@ struct RenderSequenceBuilder
 };
 
 //==============================================================================
-AudioProcessorGraph::Connection::Connection (NodeID sourceID, int sourceChannel, NodeID destID, int destChannel) noexcept
+AudioProcessorGraph::Connection::Connection (NodeID sourceID, int sourceChannel,
+                                             NodeID destID, int destChannel) noexcept
     : sourceNodeId (sourceID), sourceChannelIndex (sourceChannel),
       destNodeId (destID), destChannelIndex (destChannel)
 {
