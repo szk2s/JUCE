@@ -310,7 +310,7 @@ public:
         bool isOutput() const noexcept;
 
         //==============================================================================
-        AudioGraphIOProcessor (const IODeviceType type);
+        AudioGraphIOProcessor (IODeviceType);
         ~AudioGraphIOProcessor();
 
         const String getName() const override;
@@ -342,7 +342,7 @@ public:
 
     private:
         const IODeviceType type;
-        AudioProcessorGraph* graph;
+        AudioProcessorGraph* graph = nullptr;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioGraphIOProcessor)
     };

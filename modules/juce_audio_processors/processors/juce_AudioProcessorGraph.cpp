@@ -63,7 +63,7 @@ struct GraphRenderSequence
         currentMidiOutputBuffer.clear();
 
         for (auto* op : renderOps)
-            op->perform (buffer, midiBuffers);
+            op->perform (renderingBuffer, midiBuffers);
 
         for (int i = 0; i < buffer.getNumChannels(); ++i)
             buffer.copyFrom (i, 0, currentAudioOutputBuffer, i, 0, numSamples);
@@ -1292,7 +1292,7 @@ void AudioProcessorGraph::processBlock (AudioBuffer<double>& buffer, MidiBuffer&
 
 //==============================================================================
 AudioProcessorGraph::AudioGraphIOProcessor::AudioGraphIOProcessor (const IODeviceType deviceType)
-    : type (deviceType), graph (nullptr)
+    : type (deviceType)
 {
 }
 
