@@ -52,9 +52,34 @@ struct GraphRenderSequence
 {
     GraphRenderSequence() {}
 
+    struct Context
+    {
+        FloatType** audioBuffers;
+        MidiBuffer* midiBuffers;
+        int numSamples;
+    };
+
     void perform (AudioBuffer<FloatType>& buffer, MidiBuffer& midiMessages)
     {
         auto numSamples = buffer.getNumSamples();
+        auto maxSamples = renderingBuffer.getNumSamples() / 3;
+
+        if (numSamples > maxSamples)
+        {
+            // being asked to render more samples than our buffers have, so slice things up...
+            MidiBuffer endMIDI;
+            endMIDI.addEvents (midiMessages, maxSamples, numSamples, -maxSamples);
+
+            {
+                AudioBuffer<FloatType> startAudio (buffer.getArrayOfWritePointers(), buffer.getNumChannels(), maxSamples);
+                midiMessages.clear (maxSamples, numSamples);
+                perform (startAudio, midiMessages);
+            }
+
+            AudioBuffer<FloatType> endAudio (buffer.getArrayOfWritePointers(), buffer.getNumChannels(), maxSamples, numSamples - maxSamples);
+            perform (endAudio, endMIDI);
+            return;
+        }
 
         currentAudioInputBuffer = &buffer;
         currentAudioOutputBuffer.setSize (jmax (1, buffer.getNumChannels()), numSamples);
@@ -62,62 +87,54 @@ struct GraphRenderSequence
         currentMidiInputBuffer = &midiMessages;
         currentMidiOutputBuffer.clear();
 
-        for (auto* op : renderOps)
-            op->perform (renderingBuffer, midiBuffers);
+        {
+            const Context context { renderingBuffer.getArrayOfWritePointers(), midiBuffers.begin(), numSamples };
+
+            for (auto* op : renderOps)
+                op->perform (context);
+        }
 
         for (int i = 0; i < buffer.getNumChannels(); ++i)
             buffer.copyFrom (i, 0, currentAudioOutputBuffer, i, 0, numSamples);
 
         midiMessages.clear();
         midiMessages.addEvents (currentMidiOutputBuffer, 0, buffer.getNumSamples(), 0);
+        currentAudioInputBuffer = nullptr;
     }
 
     void addClearChannelOp (int index)
     {
-        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
-        {
-            audioBuffer.clear (index, 0);
-        });
+        createOp ([=] (const Context& c)    { FloatVectorOperations::clear (c.audioBuffers[index], c.numSamples); });
     }
 
     void addCopyChannelOp (int srcIndex, int dstIndex)
     {
-        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
-        {
-            audioBuffer.copyFrom (dstIndex, 0, audioBuffer, srcIndex, 0, audioBuffer.getNumSamples());
-        });
+        createOp ([=] (const Context& c)    { FloatVectorOperations::copy (c.audioBuffers[dstIndex],
+                                                                           c.audioBuffers[srcIndex],
+                                                                           c.numSamples); });
     }
 
     void addAddChannelOp (int srcIndex, int dstIndex)
     {
-        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
-        {
-            audioBuffer.addFrom (dstIndex, 0, audioBuffer, srcIndex, 0, audioBuffer.getNumSamples());
-        });
+        createOp ([=] (const Context& c)    { FloatVectorOperations::add (c.audioBuffers[dstIndex],
+                                                                          c.audioBuffers[srcIndex],
+                                                                          c.numSamples); });
     }
 
     void addClearMidiBufferOp (int index)
     {
-        createOp ([=] (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>& midi)
-        {
-            midi.getUnchecked (index)->clear();
-        });
+        createOp ([=] (const Context& c)    { c.midiBuffers[index].clear(); });
     }
 
     void addCopyMidiBufferOp (int srcIndex, int dstIndex)
     {
-        createOp ([=] (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>& midi)
-        {
-            *midi.getUnchecked (dstIndex) = *midiBuffers.getUnchecked (srcIndex);
-        });
+        createOp ([=] (const Context& c)    { c.midiBuffers[dstIndex] = c.midiBuffers[srcIndex]; });
     }
 
     void addAddMidiBufferOp (int srcIndex, int dstIndex)
     {
-        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>& midi)
-        {
-            midi.getUnchecked (dstIndex)->addEvents (*midiBuffers.getUnchecked (srcIndex), 0, audioBuffer.getNumSamples(), 0);
-        });
+        createOp ([=] (const Context& c)    { c.midiBuffers[dstIndex].addEvents (c.midiBuffers[srcIndex],
+                                                                                 0, c.numSamples, 0); });
     }
 
     void addDelayChannelOp (int chan, int delaySize)
@@ -142,11 +159,8 @@ struct GraphRenderSequence
         currentMidiInputBuffer = nullptr;
         currentMidiOutputBuffer.clear();
 
-        for (auto* mb : midiBuffers)
-            mb->clear();
-
-        while (midiBuffers.size() < numMidiBuffersNeeded)
-            midiBuffers.add (new MidiBuffer());
+        midiBuffers.clearQuick();
+        midiBuffers.resize (numMidiBuffersNeeded);
     }
 
     void releaseBuffers()
@@ -167,7 +181,7 @@ struct GraphRenderSequence
     MidiBuffer* currentMidiInputBuffer = nullptr;
     MidiBuffer currentMidiOutputBuffer;
 
-    OwnedArray<MidiBuffer> midiBuffers;
+    Array<MidiBuffer> midiBuffers;
 
 private:
     //==============================================================================
@@ -175,7 +189,7 @@ private:
     {
         RenderingOp() noexcept {}
         virtual ~RenderingOp() {}
-        virtual void perform (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>&) = 0;
+        virtual void perform (const Context&) = 0;
 
         JUCE_LEAK_DETECTOR (RenderingOp)
     };
@@ -189,11 +203,7 @@ private:
         struct LambdaOp  : public RenderingOp
         {
             LambdaOp (LambdaType&& f) : function (static_cast<LambdaType&&> (f)) {}
-
-            void perform (AudioBuffer<FloatType>& audio, const OwnedArray<MidiBuffer>& midi) override
-            {
-                function (audio, midi);
-            }
+            void perform (const Context& c) override    { function (c); }
 
             LambdaType function;
         };
@@ -212,11 +222,11 @@ private:
             buffer.calloc ((size_t) bufferSize);
         }
 
-        void perform (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
+        void perform (const Context& c)
         {
-            auto* data = audioBuffer.getWritePointer (channel, 0);
+            auto* data = c.audioBuffers[channel];
 
-            for (int i = audioBuffer.getNumSamples(); --i >= 0;)
+            for (int i = c.numSamples; --i >= 0;)
             {
                 buffer[writeIndex] = *data;
                 *data++ = buffer[readIndex];
@@ -251,12 +261,12 @@ private:
                 audioChannelsToUse.add (0);
         }
 
-        void perform (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>& sharedMidiBuffers)
+        void perform (const Context& c)
         {
             for (int i = 0; i < totalChans; ++i)
-                audioChannels[i] = audioBuffer.getWritePointer (audioChannelsToUse.getUnchecked (i), 0);
+                audioChannels[i] = c.audioBuffers[audioChannelsToUse.getUnchecked (i)];
 
-            AudioBuffer<FloatType> buffer (audioChannels, totalChans, audioBuffer.getNumSamples());
+            AudioBuffer<FloatType> buffer (audioChannels, totalChans, c.numSamples);
 
             if (processor->isSuspended())
             {
@@ -266,7 +276,7 @@ private:
             {
                 ScopedLock lock (processor->getCallbackLock());
 
-                callProcess (buffer, *sharedMidiBuffers.getUnchecked (midiBufferToUse));
+                callProcess (buffer, c.midiBuffers[midiBufferToUse]);
             }
         }
 
