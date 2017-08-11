@@ -149,6 +149,9 @@ public:
     */
     void clear();
 
+    /** Returns the array of nodes in the graph. */
+    const ReferenceCountedArray<Node>& getNodes() const noexcept    { return nodes; }
+
     /** Returns the number of nodes in the graph. */
     int getNumNodes() const noexcept                                { return nodes.size(); }
 
@@ -188,6 +191,9 @@ public:
     bool removeNode (Node* node);
 
     //==============================================================================
+    /** Returns the list of connections in the graph. */
+    const OwnedArray<Connection>& getConnections() const noexcept       { return connections; }
+
     /** Returns the number of connections in the graph. */
     int getNumConnections() const                                       { return connections.size(); }
 
@@ -395,7 +401,7 @@ private:
     MidiBuffer* currentMidiInputBuffer;
     MidiBuffer currentMidiOutputBuffer;
 
-    bool isPrepared;
+    bool isPrepared = false;
 
     void handleAsyncUpdate() override;
     void clearRenderingSequence();

@@ -81,9 +81,6 @@ struct AudioProcessorGraph::RenderSequence
 {
     RenderSequence (AudioProcessorGraph& g)
     {
-        SequenceBuilder builder (g, *this);
-        numBuffersNeeded = builder.nodeIds.size();
-        numMidiBuffersNeeded = builder.midiNodeIds.size();
     }
 
     template <typename FloatType>
@@ -94,6 +91,20 @@ struct AudioProcessorGraph::RenderSequence
     }
 
     int numBuffersNeeded = 0, numMidiBuffersNeeded = 0;
+
+    void addClearChannelOp (int channel)                    { createOp<ClearChannelOp> (channel); }
+    void addCopyChannelOp (int srcIndex, int dstIndex)      { createOp<CopyChannelOp> (srcIndex, dstIndex); }
+    void addAddChannelOp (int srcIndex, int dstIndex)       { createOp<AddChannelOp> (srcIndex, dstIndex); }
+    void addClearMidiBufferOp (int index)                   { createOp<ClearMidiBufferOp> (index); }
+    void addCopyMidiBufferOp (int srcIndex, int dstIndex)   { createOp<CopyMidiBufferOp> (srcIndex, dstIndex); }
+    void addAddMidiBufferOp (int srcIndex, int dstIndex)    { createOp<AddMidiBufferOp> (srcIndex, dstIndex); }
+    void addDelayChannelOp (int chan, int delaySize)        { createOp<DelayChannelOp> (chan, delaySize); }
+
+    void addProcessBufferOp (const AudioProcessorGraph::Node::Ptr& node,
+                             const Array<int>& audioChannelsUsed, int totalNumChans, int midiBuffer)
+    {
+        createOp<ProcessBufferOp> (node, audioChannelsUsed, totalNumChans, midiBuffer);
+    }
 
 private:
     struct RenderingOpBase
@@ -108,6 +119,9 @@ private:
     };
 
     OwnedArray<RenderingOpBase> renderOps;
+
+    template <typename OpType, typename... Args>
+    void createOp (Args... args) { renderOps.add (new OpType (args...)); }
 
     // use CRTP
     template <class Child>
@@ -346,557 +360,550 @@ private:
 
         JUCE_DECLARE_NON_COPYABLE (ProcessBufferOp)
     };
+};
+
+//==============================================================================
+template <typename RenderSequence>
+struct SequenceBuilder
+{
+    SequenceBuilder (AudioProcessorGraph& g, RenderSequence& s)
+        : graph (g), sequence (s)
+    {
+        createOrderedNodeList();
+
+        nodeIds.add ((uint32) zeroNodeID); // first buffer is read-only zeros
+        channels.add (0);
+
+        midiNodeIds.add ((uint32) zeroNodeID);
+
+        for (int i = 0; i < orderedNodes.size(); ++i)
+        {
+            createRenderingOpsForNode (*orderedNodes.getUnchecked(i), i);
+            markAnyUnusedBuffersAsFree (i);
+        }
+
+        graph.setLatencySamples (totalLatency);
+
+        s.numBuffersNeeded = nodeIds.size();
+        s.numMidiBuffersNeeded = midiNodeIds.size();
+    }
 
     //==============================================================================
-    /** Used to calculate the correct sequence of rendering ops needed, based on
-        the best re-use of shared buffers at each stage.
-    */
-    struct SequenceBuilder
+    AudioProcessorGraph& graph;
+    RenderSequence& sequence;
+
+    Array<AudioProcessorGraph::Node*> orderedNodes;
+    Array<int> channels;
+    Array<uint32> nodeIds, midiNodeIds;
+
+    enum { freeNodeID = 0xffffffff, zeroNodeID = 0xfffffffe, anonymousNodeID = 0xfffffffd };
+
+    static bool isNodeBusy (uint32 nodeID) noexcept     { return nodeID != freeNodeID && nodeID != zeroNodeID; }
+
+    Array<uint32> nodeDelayIDs;
+    Array<int> nodeDelays;
+    int totalLatency = 0;
+
+    int getNodeDelay (uint32 nodeID) const        { return nodeDelays [nodeDelayIDs.indexOf (nodeID)]; }
+
+    void setNodeDelay (uint32 nodeID, const int latency)
     {
-        SequenceBuilder (AudioProcessorGraph& g, RenderSequence& s)
-            : graph (g), sequence (s)
+        const int index = nodeDelayIDs.indexOf (nodeID);
+
+        if (index >= 0)
         {
-            createOrderedNodeList();
+            nodeDelays.set (index, latency);
+        }
+        else
+        {
+            nodeDelayIDs.add (nodeID);
+            nodeDelays.add (latency);
+        }
+    }
 
-            nodeIds.add ((uint32) zeroNodeID); // first buffer is read-only zeros
-            channels.add (0);
+    int getInputLatencyForNode (uint32 nodeID) const
+    {
+        int maxLatency = 0;
 
-            midiNodeIds.add ((uint32) zeroNodeID);
+        for (auto* c : graph.getConnections())
+            if (c->destNodeId == nodeID)
+                maxLatency = jmax (maxLatency, getNodeDelay (c->sourceNodeId));
 
-            for (int i = 0; i < orderedNodes.size(); ++i)
-            {
-                createRenderingOpsForNode (*orderedNodes.getUnchecked(i), i);
-                markAnyUnusedBuffersAsFree (i);
-            }
+        return maxLatency;
+    }
 
-            graph.setLatencySamples (totalLatency);
+    //==============================================================================
+    // Fast lookup table for checking which nodes are inputs to others.
+    struct NodeInputLookupTable
+    {
+        template <typename ConnectionList>
+        explicit NodeInputLookupTable (const ConnectionList& connections)
+        {
+            for (auto* c : connections)
+                entries[c->destNodeId].add (c->sourceNodeId);
         }
 
+        bool isAnInputTo (uint32 sourceID, uint32 destID) const noexcept
+        {
+            return isAnInputToRecursive (sourceID, destID, entries.size());
+        }
+
+    private:
         //==============================================================================
-        AudioProcessorGraph& graph;
-        RenderSequence& sequence;
+        std::unordered_map<uint32, SortedSet<uint32>> entries;
 
-        Array<AudioProcessorGraph::Node*> orderedNodes;
-        Array<int> channels;
-        Array<uint32> nodeIds, midiNodeIds;
-
-        enum { freeNodeID = 0xffffffff, zeroNodeID = 0xfffffffe, anonymousNodeID = 0xfffffffd };
-
-        static bool isNodeBusy (uint32 nodeID) noexcept     { return nodeID != freeNodeID && nodeID != zeroNodeID; }
-
-        Array<uint32> nodeDelayIDs;
-        Array<int> nodeDelays;
-        int totalLatency = 0;
-
-        int getNodeDelay (uint32 nodeID) const        { return nodeDelays [nodeDelayIDs.indexOf (nodeID)]; }
-
-        void setNodeDelay (uint32 nodeID, const int latency)
+        bool isAnInputToRecursive (uint32 sourceID, uint32 destID, size_t recursionDepth) const noexcept
         {
-            const int index = nodeDelayIDs.indexOf (nodeID);
+            auto&& entry = entries.find (destID);
 
-            if (index >= 0)
+            if (entry != entries.end())
             {
-                nodeDelays.set (index, latency);
+                auto& srcNodes = entry->second;
+
+                if (srcNodes.contains (sourceID))
+                    return true;
+
+                if (recursionDepth != 0)
+                    for (auto&& src : srcNodes)
+                        if (isAnInputToRecursive (sourceID, src, recursionDepth - 1))
+                            return true;
             }
-            else
-            {
-                nodeDelayIDs.add (nodeID);
-                nodeDelays.add (latency);
-            }
+
+            return false;
         }
 
-        int getInputLatencyForNode (uint32 nodeID) const
+        JUCE_DECLARE_NON_COPYABLE (NodeInputLookupTable)
+    };
+
+    void createOrderedNodeList()
+    {
+        const NodeInputLookupTable table (graph.getConnections());
+
+        for (auto* node : graph.getNodes())
         {
-            int maxLatency = 0;
+            int j = 0;
 
-            for (auto* c : graph.connections)
-                if (c->destNodeId == nodeID)
-                    maxLatency = jmax (maxLatency, getNodeDelay (c->sourceNodeId));
+            for (; j < orderedNodes.size(); ++j)
+                if (table.isAnInputTo (node->nodeId, orderedNodes.getUnchecked(j)->nodeId))
+                  break;
 
-            return maxLatency;
+            orderedNodes.insert (j, node);
         }
+    }
 
-        //==============================================================================
-        // Fast lookup table for checking which nodes are inputs to others.
-        struct NodeInputLookupTable
+    void createRenderingOpsForNode (AudioProcessorGraph::Node& node, const int ourRenderingIndex)
+    {
+        auto& processor = *node.getProcessor();
+        auto numIns  = processor.getTotalNumInputChannels();
+        auto numOuts = processor.getTotalNumOutputChannels();
+        auto totalChans = jmax (numIns, numOuts);
+
+        Array<int> audioChannelsToUse;
+        int midiBufferToUse = -1;
+
+        int maxLatency = getInputLatencyForNode (node.nodeId);
+
+        for (int inputChan = 0; inputChan < numIns; ++inputChan)
         {
-            template <typename ConnectionList>
-            explicit NodeInputLookupTable (const ConnectionList& connections)
-            {
-                for (auto* c : connections)
-                    entries[c->destNodeId].add (c->sourceNodeId);
-            }
-
-            bool isAnInputTo (uint32 sourceID, uint32 destID) const noexcept
-            {
-                return isAnInputToRecursive (sourceID, destID, entries.size());
-            }
-
-        private:
-            //==============================================================================
-            std::unordered_map<uint32, SortedSet<uint32>> entries;
-
-            bool isAnInputToRecursive (uint32 sourceID, uint32 destID, size_t recursionDepth) const noexcept
-            {
-                auto&& entry = entries.find (destID);
-
-                if (entry != entries.end())
-                {
-                    auto& srcNodes = entry->second;
-
-                    if (srcNodes.contains (sourceID))
-                        return true;
-
-                    if (recursionDepth != 0)
-                        for (auto&& src : srcNodes)
-                            if (isAnInputToRecursive (sourceID, src, recursionDepth - 1))
-                                return true;
-                }
-
-                return false;
-            }
-
-            JUCE_DECLARE_NON_COPYABLE (NodeInputLookupTable)
-        };
-
-        void createOrderedNodeList()
-        {
-            const NodeInputLookupTable table (graph.connections);
-
-            for (auto* node : graph.nodes)
-            {
-                int j = 0;
-
-                for (; j < orderedNodes.size(); ++j)
-                    if (table.isAnInputTo (node->nodeId, orderedNodes.getUnchecked(j)->nodeId))
-                      break;
-
-                orderedNodes.insert (j, node);
-            }
-        }
-
-        void createRenderingOpsForNode (AudioProcessorGraph::Node& node, const int ourRenderingIndex)
-        {
-            auto& processor = *node.getProcessor();
-            auto& renderingOps = sequence.renderOps;
-            auto numIns  = processor.getTotalNumInputChannels();
-            auto numOuts = processor.getTotalNumOutputChannels();
-            auto totalChans = jmax (numIns, numOuts);
-
-            Array<int> audioChannelsToUse;
-            int midiBufferToUse = -1;
-
-            int maxLatency = getInputLatencyForNode (node.nodeId);
-
-            for (int inputChan = 0; inputChan < numIns; ++inputChan)
-            {
-                // get a list of all the inputs to this node
-                Array<uint32> sourceNodes;
-                Array<int> sourceOutputChans;
-
-                for (int i = graph.getNumConnections(); --i >= 0;)
-                {
-                    auto* c = graph.getConnection (i);
-
-                    if (c->destNodeId == node.nodeId && c->destChannelIndex == inputChan)
-                    {
-                        sourceNodes.add (c->sourceNodeId);
-                        sourceOutputChans.add (c->sourceChannelIndex);
-                    }
-                }
-
-                int bufIndex = -1;
-
-                if (sourceNodes.isEmpty())
-                {
-                    // unconnected input channel
-
-                    if (inputChan >= numOuts)
-                    {
-                        bufIndex = getReadOnlyEmptyBuffer();
-                        jassert (bufIndex >= 0);
-                    }
-                    else
-                    {
-                        bufIndex = getFreeBuffer (false);
-                        renderingOps.add (new ClearChannelOp (bufIndex));
-                    }
-                }
-                else if (sourceNodes.size() == 1)
-                {
-                    // channel with a straightforward single input..
-                    const uint32 srcNode = sourceNodes.getUnchecked(0);
-                    const int srcChan = sourceOutputChans.getUnchecked(0);
-
-                    bufIndex = getBufferContaining (srcNode, srcChan);
-
-                    if (bufIndex < 0)
-                    {
-                        // if not found, this is probably a feedback loop
-                        bufIndex = getReadOnlyEmptyBuffer();
-                        jassert (bufIndex >= 0);
-                    }
-
-                    if (inputChan < numOuts
-                         && isBufferNeededLater (ourRenderingIndex,
-                                                 inputChan,
-                                                 srcNode, srcChan))
-                    {
-                        // can't mess up this channel because it's needed later by another node, so we
-                        // need to use a copy of it..
-                        const int newFreeBuffer = getFreeBuffer (false);
-
-                        renderingOps.add (new CopyChannelOp (bufIndex, newFreeBuffer));
-
-                        bufIndex = newFreeBuffer;
-                    }
-
-                    const int nodeDelay = getNodeDelay (srcNode);
-
-                    if (nodeDelay < maxLatency)
-                        renderingOps.add (new DelayChannelOp (bufIndex, maxLatency - nodeDelay));
-                }
-                else
-                {
-                    // channel with a mix of several inputs..
-
-                    // try to find a re-usable channel from our inputs..
-                    int reusableInputIndex = -1;
-
-                    for (int i = 0; i < sourceNodes.size(); ++i)
-                    {
-                        const int sourceBufIndex = getBufferContaining (sourceNodes.getUnchecked(i),
-                                                                        sourceOutputChans.getUnchecked(i));
-
-                        if (sourceBufIndex >= 0
-                            && ! isBufferNeededLater (ourRenderingIndex,
-                                                      inputChan,
-                                                      sourceNodes.getUnchecked(i),
-                                                      sourceOutputChans.getUnchecked(i)))
-                        {
-                            // we've found one of our input chans that can be re-used..
-                            reusableInputIndex = i;
-                            bufIndex = sourceBufIndex;
-
-                            const int nodeDelay = getNodeDelay (sourceNodes.getUnchecked (i));
-                            if (nodeDelay < maxLatency)
-                                renderingOps.add (new DelayChannelOp (sourceBufIndex, maxLatency - nodeDelay));
-
-                            break;
-                        }
-                    }
-
-                    if (reusableInputIndex < 0)
-                    {
-                        // can't re-use any of our input chans, so get a new one and copy everything into it..
-                        bufIndex = getFreeBuffer (false);
-                        jassert (bufIndex != 0);
-
-                        markBufferAsContaining (bufIndex, static_cast<uint32> (anonymousNodeID), 0);
-
-                        const int srcIndex = getBufferContaining (sourceNodes.getUnchecked (0),
-                                                                  sourceOutputChans.getUnchecked (0));
-                        if (srcIndex < 0)
-                        {
-                            // if not found, this is probably a feedback loop
-                            renderingOps.add (new ClearChannelOp (bufIndex));
-                        }
-                        else
-                        {
-                            renderingOps.add (new CopyChannelOp (srcIndex, bufIndex));
-                        }
-
-                        reusableInputIndex = 0;
-                        const int nodeDelay = getNodeDelay (sourceNodes.getFirst());
-
-                        if (nodeDelay < maxLatency)
-                            renderingOps.add (new DelayChannelOp (bufIndex, maxLatency - nodeDelay));
-                    }
-
-                    for (int j = 0; j < sourceNodes.size(); ++j)
-                    {
-                        if (j != reusableInputIndex)
-                        {
-                            int srcIndex = getBufferContaining (sourceNodes.getUnchecked(j),
-                                                                sourceOutputChans.getUnchecked(j));
-                            if (srcIndex >= 0)
-                            {
-                                const int nodeDelay = getNodeDelay (sourceNodes.getUnchecked (j));
-
-                                if (nodeDelay < maxLatency)
-                                {
-                                    if (! isBufferNeededLater (ourRenderingIndex, inputChan,
-                                                               sourceNodes.getUnchecked(j),
-                                                               sourceOutputChans.getUnchecked(j)))
-                                    {
-                                        renderingOps.add (new DelayChannelOp (srcIndex, maxLatency - nodeDelay));
-                                    }
-                                    else // buffer is reused elsewhere, can't be delayed
-                                    {
-                                        const int bufferToDelay = getFreeBuffer (false);
-                                        renderingOps.add (new CopyChannelOp (srcIndex, bufferToDelay));
-                                        renderingOps.add (new DelayChannelOp (bufferToDelay, maxLatency - nodeDelay));
-                                        srcIndex = bufferToDelay;
-                                    }
-                                }
-
-                                renderingOps.add (new AddChannelOp (srcIndex, bufIndex));
-                            }
-                        }
-                    }
-                }
-
-                jassert (bufIndex >= 0);
-                audioChannelsToUse.add (bufIndex);
-
-                if (inputChan < numOuts)
-                    markBufferAsContaining (bufIndex, node.nodeId, inputChan);
-            }
-
-            for (int outputChan = numIns; outputChan < numOuts; ++outputChan)
-            {
-                const int bufIndex = getFreeBuffer (false);
-                jassert (bufIndex != 0);
-                audioChannelsToUse.add (bufIndex);
-
-                markBufferAsContaining (bufIndex, node.nodeId, outputChan);
-            }
-
-            // Now the same thing for midi..
-            Array<uint32> midiSourceNodes;
+            // get a list of all the inputs to this node
+            Array<uint32> sourceNodes;
+            Array<int> sourceOutputChans;
 
             for (int i = graph.getNumConnections(); --i >= 0;)
             {
                 auto* c = graph.getConnection (i);
 
-                if (c->destNodeId == node.nodeId && c->destChannelIndex == AudioProcessorGraph::midiChannelIndex)
-                    midiSourceNodes.add (c->sourceNodeId);
-            }
-
-            if (midiSourceNodes.isEmpty())
-            {
-                // No midi inputs..
-                midiBufferToUse = getFreeBuffer (true); // need to pick a buffer even if the processor doesn't use midi
-
-                if (processor.acceptsMidi() || processor.producesMidi())
-                    renderingOps.add (new ClearMidiBufferOp (midiBufferToUse));
-            }
-            else if (midiSourceNodes.size() == 1)
-            {
-                // One midi input..
-                midiBufferToUse = getBufferContaining (midiSourceNodes.getUnchecked(0),
-                                                       AudioProcessorGraph::midiChannelIndex);
-
-                if (midiBufferToUse >= 0)
+                if (c->destNodeId == node.nodeId && c->destChannelIndex == inputChan)
                 {
-                    if (isBufferNeededLater (ourRenderingIndex,
-                                             AudioProcessorGraph::midiChannelIndex,
-                                             midiSourceNodes.getUnchecked(0),
-                                             AudioProcessorGraph::midiChannelIndex))
-                    {
-                        // can't mess up this channel because it's needed later by another node, so we
-                        // need to use a copy of it..
-                        const int newFreeBuffer = getFreeBuffer (true);
-                        renderingOps.add (new CopyMidiBufferOp (midiBufferToUse, newFreeBuffer));
-                        midiBufferToUse = newFreeBuffer;
-                    }
+                    sourceNodes.add (c->sourceNodeId);
+                    sourceOutputChans.add (c->sourceChannelIndex);
+                }
+            }
+
+            int bufIndex = -1;
+
+            if (sourceNodes.isEmpty())
+            {
+                // unconnected input channel
+
+                if (inputChan >= numOuts)
+                {
+                    bufIndex = getReadOnlyEmptyBuffer();
+                    jassert (bufIndex >= 0);
                 }
                 else
                 {
-                    // probably a feedback loop, so just use an empty one..
-                    midiBufferToUse = getFreeBuffer (true); // need to pick a buffer even if the processor doesn't use midi
+                    bufIndex = getFreeBuffer (false);
+                    sequence.addClearChannelOp (bufIndex);
                 }
+            }
+            else if (sourceNodes.size() == 1)
+            {
+                // channel with a straightforward single input..
+                const uint32 srcNode = sourceNodes.getUnchecked(0);
+                const int srcChan = sourceOutputChans.getUnchecked(0);
+
+                bufIndex = getBufferContaining (srcNode, srcChan);
+
+                if (bufIndex < 0)
+                {
+                    // if not found, this is probably a feedback loop
+                    bufIndex = getReadOnlyEmptyBuffer();
+                    jassert (bufIndex >= 0);
+                }
+
+                if (inputChan < numOuts
+                     && isBufferNeededLater (ourRenderingIndex,
+                                             inputChan,
+                                             srcNode, srcChan))
+                {
+                    // can't mess up this channel because it's needed later by another node, so we
+                    // need to use a copy of it..
+                    const int newFreeBuffer = getFreeBuffer (false);
+
+                    sequence.addCopyChannelOp (bufIndex, newFreeBuffer);
+
+                    bufIndex = newFreeBuffer;
+                }
+
+                const int nodeDelay = getNodeDelay (srcNode);
+
+                if (nodeDelay < maxLatency)
+                    sequence.addDelayChannelOp (bufIndex, maxLatency - nodeDelay);
             }
             else
             {
-                // More than one midi input being mixed..
+                // channel with a mix of several inputs..
+
+                // try to find a re-usable channel from our inputs..
                 int reusableInputIndex = -1;
 
-                for (int i = 0; i < midiSourceNodes.size(); ++i)
+                for (int i = 0; i < sourceNodes.size(); ++i)
                 {
-                    const int sourceBufIndex = getBufferContaining (midiSourceNodes.getUnchecked(i),
-                                                                    AudioProcessorGraph::midiChannelIndex);
+                    const int sourceBufIndex = getBufferContaining (sourceNodes.getUnchecked(i),
+                                                                    sourceOutputChans.getUnchecked(i));
 
                     if (sourceBufIndex >= 0
-                         && ! isBufferNeededLater (ourRenderingIndex,
-                                                   AudioProcessorGraph::midiChannelIndex,
-                                                   midiSourceNodes.getUnchecked(i),
-                                                   AudioProcessorGraph::midiChannelIndex))
+                        && ! isBufferNeededLater (ourRenderingIndex,
+                                                  inputChan,
+                                                  sourceNodes.getUnchecked(i),
+                                                  sourceOutputChans.getUnchecked(i)))
                     {
-                        // we've found one of our input buffers that can be re-used..
+                        // we've found one of our input chans that can be re-used..
                         reusableInputIndex = i;
-                        midiBufferToUse = sourceBufIndex;
+                        bufIndex = sourceBufIndex;
+
+                        const int nodeDelay = getNodeDelay (sourceNodes.getUnchecked (i));
+                        if (nodeDelay < maxLatency)
+                            sequence.addDelayChannelOp (sourceBufIndex, maxLatency - nodeDelay);
+
                         break;
                     }
                 }
 
                 if (reusableInputIndex < 0)
                 {
-                    // can't re-use any of our input buffers, so get a new one and copy everything into it..
-                    midiBufferToUse = getFreeBuffer (true);
-                    jassert (midiBufferToUse >= 0);
+                    // can't re-use any of our input chans, so get a new one and copy everything into it..
+                    bufIndex = getFreeBuffer (false);
+                    jassert (bufIndex != 0);
 
-                    const int srcIndex = getBufferContaining (midiSourceNodes.getUnchecked(0),
-                                                              AudioProcessorGraph::midiChannelIndex);
-                    if (srcIndex >= 0)
-                        renderingOps.add (new CopyMidiBufferOp (srcIndex, midiBufferToUse));
+                    markBufferAsContaining (bufIndex, static_cast<uint32> (anonymousNodeID), 0);
+
+                    const int srcIndex = getBufferContaining (sourceNodes.getUnchecked (0),
+                                                              sourceOutputChans.getUnchecked (0));
+                    if (srcIndex < 0)
+                        sequence.addClearChannelOp (bufIndex);  // if not found, this is probably a feedback loop
                     else
-                        renderingOps.add (new ClearMidiBufferOp (midiBufferToUse));
+                        sequence.addCopyChannelOp (srcIndex, bufIndex);
 
                     reusableInputIndex = 0;
+                    const int nodeDelay = getNodeDelay (sourceNodes.getFirst());
+
+                    if (nodeDelay < maxLatency)
+                        sequence.addDelayChannelOp (bufIndex, maxLatency - nodeDelay);
                 }
 
-                for (int j = 0; j < midiSourceNodes.size(); ++j)
+                for (int j = 0; j < sourceNodes.size(); ++j)
                 {
                     if (j != reusableInputIndex)
                     {
-                        const int srcIndex = getBufferContaining (midiSourceNodes.getUnchecked(j),
-                                                                  AudioProcessorGraph::midiChannelIndex);
+                        int srcIndex = getBufferContaining (sourceNodes.getUnchecked(j),
+                                                            sourceOutputChans.getUnchecked(j));
                         if (srcIndex >= 0)
-                            renderingOps.add (new AddMidiBufferOp (srcIndex, midiBufferToUse));
+                        {
+                            const int nodeDelay = getNodeDelay (sourceNodes.getUnchecked (j));
+
+                            if (nodeDelay < maxLatency)
+                            {
+                                if (! isBufferNeededLater (ourRenderingIndex, inputChan,
+                                                           sourceNodes.getUnchecked(j),
+                                                           sourceOutputChans.getUnchecked(j)))
+                                {
+                                    sequence.addDelayChannelOp (srcIndex, maxLatency - nodeDelay);
+                                }
+                                else // buffer is reused elsewhere, can't be delayed
+                                {
+                                    const int bufferToDelay = getFreeBuffer (false);
+                                    sequence.addCopyChannelOp (srcIndex, bufferToDelay);
+                                    sequence.addDelayChannelOp (bufferToDelay, maxLatency - nodeDelay);
+                                    srcIndex = bufferToDelay;
+                                }
+                            }
+
+                            sequence.addAddChannelOp (srcIndex, bufIndex);
+                        }
                     }
                 }
             }
 
-            if (processor.producesMidi())
-                markBufferAsContaining (midiBufferToUse, node.nodeId,
-                                        AudioProcessorGraph::midiChannelIndex);
+            jassert (bufIndex >= 0);
+            audioChannelsToUse.add (bufIndex);
 
-            setNodeDelay (node.nodeId, maxLatency + processor.getLatencySamples());
-
-            if (numOuts == 0)
-                totalLatency = maxLatency;
-
-            renderingOps.add (new ProcessBufferOp (&node, audioChannelsToUse,
-                                                   totalChans, midiBufferToUse));
+            if (inputChan < numOuts)
+                markBufferAsContaining (bufIndex, node.nodeId, inputChan);
         }
 
-        //==============================================================================
-        int getFreeBuffer (const bool forMidi)
+        for (int outputChan = numIns; outputChan < numOuts; ++outputChan)
         {
-            if (forMidi)
-            {
-                for (int i = 1; i < midiNodeIds.size(); ++i)
-                    if (midiNodeIds.getUnchecked(i) == freeNodeID)
-                        return i;
+            const int bufIndex = getFreeBuffer (false);
+            jassert (bufIndex != 0);
+            audioChannelsToUse.add (bufIndex);
 
-                midiNodeIds.add ((uint32) freeNodeID);
-                return midiNodeIds.size() - 1;
-            }
-            else
-            {
-                for (int i = 1; i < nodeIds.size(); ++i)
-                    if (nodeIds.getUnchecked(i) == freeNodeID)
-                        return i;
-
-                nodeIds.add ((uint32) freeNodeID);
-                channels.add (0);
-                return nodeIds.size() - 1;
-            }
+            markBufferAsContaining (bufIndex, node.nodeId, outputChan);
         }
 
-        int getReadOnlyEmptyBuffer() const noexcept
+        // Now the same thing for midi..
+        Array<uint32> midiSourceNodes;
+
+        for (int i = graph.getNumConnections(); --i >= 0;)
         {
-            return 0;
+            auto* c = graph.getConnection (i);
+
+            if (c->destNodeId == node.nodeId && c->destChannelIndex == AudioProcessorGraph::midiChannelIndex)
+                midiSourceNodes.add (c->sourceNodeId);
         }
 
-        int getBufferContaining (const uint32 nodeId, const int outputChannel) const noexcept
+        if (midiSourceNodes.isEmpty())
         {
-            if (outputChannel == AudioProcessorGraph::midiChannelIndex)
-            {
-                for (int i = midiNodeIds.size(); --i >= 0;)
-                    if (midiNodeIds.getUnchecked(i) == nodeId)
-                        return i;
-            }
-            else
-            {
-                for (int i = nodeIds.size(); --i >= 0;)
-                    if (nodeIds.getUnchecked(i) == nodeId
-                         && channels.getUnchecked(i) == outputChannel)
-                        return i;
-            }
+            // No midi inputs..
+            midiBufferToUse = getFreeBuffer (true); // need to pick a buffer even if the processor doesn't use midi
 
-            return -1;
+            if (processor.acceptsMidi() || processor.producesMidi())
+                sequence.addClearMidiBufferOp (midiBufferToUse);
         }
-
-        void markAnyUnusedBuffersAsFree (const int stepIndex)
+        else if (midiSourceNodes.size() == 1)
         {
-            for (int i = 0; i < nodeIds.size(); ++i)
+            // One midi input..
+            midiBufferToUse = getBufferContaining (midiSourceNodes.getUnchecked(0),
+                                                   AudioProcessorGraph::midiChannelIndex);
+
+            if (midiBufferToUse >= 0)
             {
-                if (isNodeBusy (nodeIds.getUnchecked(i))
-                     && ! isBufferNeededLater (stepIndex, -1,
-                                               nodeIds.getUnchecked(i),
-                                               channels.getUnchecked(i)))
+                if (isBufferNeededLater (ourRenderingIndex,
+                                         AudioProcessorGraph::midiChannelIndex,
+                                         midiSourceNodes.getUnchecked(0),
+                                         AudioProcessorGraph::midiChannelIndex))
                 {
-                    nodeIds.set (i, (uint32) freeNodeID);
+                    // can't mess up this channel because it's needed later by another node, so we
+                    // need to use a copy of it..
+                    const int newFreeBuffer = getFreeBuffer (true);
+                    sequence.addCopyMidiBufferOp (midiBufferToUse, newFreeBuffer);
+                    midiBufferToUse = newFreeBuffer;
                 }
             }
-
-            for (int i = 0; i < midiNodeIds.size(); ++i)
+            else
             {
-                if (isNodeBusy (midiNodeIds.getUnchecked(i))
-                     && ! isBufferNeededLater (stepIndex, -1,
-                                               midiNodeIds.getUnchecked(i),
+                // probably a feedback loop, so just use an empty one..
+                midiBufferToUse = getFreeBuffer (true); // need to pick a buffer even if the processor doesn't use midi
+            }
+        }
+        else
+        {
+            // More than one midi input being mixed..
+            int reusableInputIndex = -1;
+
+            for (int i = 0; i < midiSourceNodes.size(); ++i)
+            {
+                const int sourceBufIndex = getBufferContaining (midiSourceNodes.getUnchecked(i),
+                                                                AudioProcessorGraph::midiChannelIndex);
+
+                if (sourceBufIndex >= 0
+                     && ! isBufferNeededLater (ourRenderingIndex,
+                                               AudioProcessorGraph::midiChannelIndex,
+                                               midiSourceNodes.getUnchecked(i),
                                                AudioProcessorGraph::midiChannelIndex))
                 {
-                    midiNodeIds.set (i, (uint32) freeNodeID);
+                    // we've found one of our input buffers that can be re-used..
+                    reusableInputIndex = i;
+                    midiBufferToUse = sourceBufIndex;
+                    break;
                 }
             }
-        }
 
-        bool isBufferNeededLater (int stepIndexToSearchFrom,
-                                  int inputChannelOfIndexToIgnore,
-                                  const uint32 nodeId,
-                                  const int outputChanIndex) const
-        {
-            while (stepIndexToSearchFrom < orderedNodes.size())
+            if (reusableInputIndex < 0)
             {
-                auto* node = orderedNodes.getUnchecked (stepIndexToSearchFrom);
+                // can't re-use any of our input buffers, so get a new one and copy everything into it..
+                midiBufferToUse = getFreeBuffer (true);
+                jassert (midiBufferToUse >= 0);
 
-                if (outputChanIndex == AudioProcessorGraph::midiChannelIndex)
-                {
-                    if (inputChannelOfIndexToIgnore != AudioProcessorGraph::midiChannelIndex
-                         && graph.getConnectionBetween (nodeId, AudioProcessorGraph::midiChannelIndex,
-                                                        node->nodeId, AudioProcessorGraph::midiChannelIndex) != nullptr)
-                        return true;
-                }
+                const int srcIndex = getBufferContaining (midiSourceNodes.getUnchecked(0),
+                                                          AudioProcessorGraph::midiChannelIndex);
+                if (srcIndex >= 0)
+                    sequence.addCopyMidiBufferOp (srcIndex, midiBufferToUse);
                 else
-                {
-                    for (int i = 0; i < node->getProcessor()->getTotalNumInputChannels(); ++i)
-                        if (i != inputChannelOfIndexToIgnore
-                             && graph.getConnectionBetween (nodeId, outputChanIndex,
-                                                            node->nodeId, i) != nullptr)
-                            return true;
-                }
+                    sequence.addClearMidiBufferOp (midiBufferToUse);
 
-                inputChannelOfIndexToIgnore = -1;
-                ++stepIndexToSearchFrom;
+                reusableInputIndex = 0;
             }
 
-            return false;
+            for (int j = 0; j < midiSourceNodes.size(); ++j)
+            {
+                if (j != reusableInputIndex)
+                {
+                    const int srcIndex = getBufferContaining (midiSourceNodes.getUnchecked(j),
+                                                              AudioProcessorGraph::midiChannelIndex);
+                    if (srcIndex >= 0)
+                        sequence.addAddMidiBufferOp (srcIndex, midiBufferToUse);
+                }
+            }
         }
 
-        void markBufferAsContaining (int bufferNum, uint32 nodeId, int outputIndex)
-        {
-            if (outputIndex == AudioProcessorGraph::midiChannelIndex)
-            {
-                jassert (bufferNum > 0 && bufferNum < midiNodeIds.size());
+        if (processor.producesMidi())
+            markBufferAsContaining (midiBufferToUse, node.nodeId,
+                                    AudioProcessorGraph::midiChannelIndex);
 
-                midiNodeIds.set (bufferNum, nodeId);
+        setNodeDelay (node.nodeId, maxLatency + processor.getLatencySamples());
+
+        if (numOuts == 0)
+            totalLatency = maxLatency;
+
+        sequence.addProcessBufferOp (&node, audioChannelsToUse, totalChans, midiBufferToUse);
+    }
+
+    //==============================================================================
+    int getFreeBuffer (const bool forMidi)
+    {
+        if (forMidi)
+        {
+            for (int i = 1; i < midiNodeIds.size(); ++i)
+                if (midiNodeIds.getUnchecked(i) == freeNodeID)
+                    return i;
+
+            midiNodeIds.add ((uint32) freeNodeID);
+            return midiNodeIds.size() - 1;
+        }
+        else
+        {
+            for (int i = 1; i < nodeIds.size(); ++i)
+                if (nodeIds.getUnchecked(i) == freeNodeID)
+                    return i;
+
+            nodeIds.add ((uint32) freeNodeID);
+            channels.add (0);
+            return nodeIds.size() - 1;
+        }
+    }
+
+    int getReadOnlyEmptyBuffer() const noexcept
+    {
+        return 0;
+    }
+
+    int getBufferContaining (const uint32 nodeId, const int outputChannel) const noexcept
+    {
+        if (outputChannel == AudioProcessorGraph::midiChannelIndex)
+        {
+            for (int i = midiNodeIds.size(); --i >= 0;)
+                if (midiNodeIds.getUnchecked(i) == nodeId)
+                    return i;
+        }
+        else
+        {
+            for (int i = nodeIds.size(); --i >= 0;)
+                if (nodeIds.getUnchecked(i) == nodeId
+                     && channels.getUnchecked(i) == outputChannel)
+                    return i;
+        }
+
+        return -1;
+    }
+
+    void markAnyUnusedBuffersAsFree (const int stepIndex)
+    {
+        for (int i = 0; i < nodeIds.size(); ++i)
+        {
+            if (isNodeBusy (nodeIds.getUnchecked(i))
+                 && ! isBufferNeededLater (stepIndex, -1,
+                                           nodeIds.getUnchecked(i),
+                                           channels.getUnchecked(i)))
+            {
+                nodeIds.set (i, (uint32) freeNodeID);
+            }
+        }
+
+        for (int i = 0; i < midiNodeIds.size(); ++i)
+        {
+            if (isNodeBusy (midiNodeIds.getUnchecked(i))
+                 && ! isBufferNeededLater (stepIndex, -1,
+                                           midiNodeIds.getUnchecked(i),
+                                           AudioProcessorGraph::midiChannelIndex))
+            {
+                midiNodeIds.set (i, (uint32) freeNodeID);
+            }
+        }
+    }
+
+    bool isBufferNeededLater (int stepIndexToSearchFrom,
+                              int inputChannelOfIndexToIgnore,
+                              const uint32 nodeId,
+                              const int outputChanIndex) const
+    {
+        while (stepIndexToSearchFrom < orderedNodes.size())
+        {
+            auto* node = orderedNodes.getUnchecked (stepIndexToSearchFrom);
+
+            if (outputChanIndex == AudioProcessorGraph::midiChannelIndex)
+            {
+                if (inputChannelOfIndexToIgnore != AudioProcessorGraph::midiChannelIndex
+                     && graph.getConnectionBetween (nodeId, AudioProcessorGraph::midiChannelIndex,
+                                                    node->nodeId, AudioProcessorGraph::midiChannelIndex) != nullptr)
+                    return true;
             }
             else
             {
-                jassert (bufferNum >= 0 && bufferNum < nodeIds.size());
-
-                nodeIds.set (bufferNum, nodeId);
-                channels.set (bufferNum, outputIndex);
+                for (int i = 0; i < node->getProcessor()->getTotalNumInputChannels(); ++i)
+                    if (i != inputChannelOfIndexToIgnore
+                         && graph.getConnectionBetween (nodeId, outputChanIndex,
+                                                        node->nodeId, i) != nullptr)
+                        return true;
             }
+
+            inputChannelOfIndexToIgnore = -1;
+            ++stepIndexToSearchFrom;
         }
 
-        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SequenceBuilder)
-    };
-};
+        return false;
+    }
 
+    void markBufferAsContaining (int bufferNum, uint32 nodeId, int outputIndex)
+    {
+        if (outputIndex == AudioProcessorGraph::midiChannelIndex)
+        {
+            jassert (bufferNum > 0 && bufferNum < midiNodeIds.size());
+
+            midiNodeIds.set (bufferNum, nodeId);
+        }
+        else
+        {
+            jassert (bufferNum >= 0 && bufferNum < nodeIds.size());
+
+            nodeIds.set (bufferNum, nodeId);
+            channels.set (bufferNum, outputIndex);
+        }
+    }
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SequenceBuilder)
+};
 
 //==============================================================================
 AudioProcessorGraph::Connection::Connection (const uint32 sourceID, const int sourceChannel,
@@ -908,7 +915,7 @@ AudioProcessorGraph::Connection::Connection (const uint32 sourceID, const int so
 
 //==============================================================================
 AudioProcessorGraph::Node::Node (const uint32 nodeID, AudioProcessor* const p) noexcept
-    : nodeId (nodeID), processor (p), isPrepared (false)
+    : nodeId (nodeID), processor (p)
 {
     jassert (processor != nullptr);
 }
@@ -941,8 +948,7 @@ void AudioProcessorGraph::Node::unprepare()
 
 void AudioProcessorGraph::Node::setParentGraph (AudioProcessorGraph* const graph) const
 {
-    if (AudioProcessorGraph::AudioGraphIOProcessor* const ioProc
-            = dynamic_cast<AudioProcessorGraph::AudioGraphIOProcessor*> (processor.get()))
+    if (auto* ioProc = dynamic_cast<AudioProcessorGraph::AudioGraphIOProcessor*> (processor.get()))
         ioProc->setParentGraph (graph);
 }
 
@@ -1280,6 +1286,8 @@ void AudioProcessorGraph::buildRenderingSequence()
             node->prepare (getSampleRate(), getBlockSize(), this, getProcessingPrecision());
 
         newRenderSequence = new RenderSequence (*this);
+
+        SequenceBuilder<RenderSequence> builder (*this, *newRenderSequence);
     }
 
     {
