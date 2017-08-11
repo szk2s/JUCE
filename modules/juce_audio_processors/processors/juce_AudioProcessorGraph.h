@@ -384,7 +384,9 @@ private:
     OwnedArray<Connection> connections;
     uint32 lastNodeId;
     OwnedArray<MidiBuffer> midiBuffers;
-    Array<void*> renderingOps;
+
+    struct RenderSequence;
+    ScopedPointer<RenderSequence> renderSequence;
 
     friend class AudioGraphIOProcessor;
     struct AudioProcessorGraphBufferHelpers;
