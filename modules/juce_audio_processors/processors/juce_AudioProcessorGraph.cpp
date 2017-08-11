@@ -30,8 +30,8 @@ const int AudioProcessorGraph::midiChannelIndex = 0x1000;
 //==============================================================================
 struct GraphConnectionSorter
 {
-    static int compareElements (const AudioProcessorGraph::Connection* const first,
-                                const AudioProcessorGraph::Connection* const second) noexcept
+    static int compareElements (const AudioProcessorGraph::Connection* first,
+                                const AudioProcessorGraph::Connection* second) noexcept
     {
         if (first->sourceNodeId < second->sourceNodeId)                return -1;
         if (first->sourceNodeId > second->sourceNodeId)                return 1;
@@ -63,7 +63,7 @@ struct GraphRenderSequence
         currentMidiOutputBuffer.clear();
 
         for (auto* op : renderOps)
-            op->perform (buffer, midiBuffers, numSamples);
+            op->perform (buffer, midiBuffers);
 
         for (int i = 0; i < buffer.getNumChannels(); ++i)
             buffer.copyFrom (i, 0, currentAudioOutputBuffer, i, 0, numSamples);
@@ -72,18 +72,63 @@ struct GraphRenderSequence
         midiMessages.addEvents (currentMidiOutputBuffer, 0, buffer.getNumSamples(), 0);
     }
 
-    void addClearChannelOp (int channel)                    { createOp<ClearChannelOp> (channel); }
-    void addCopyChannelOp (int srcIndex, int dstIndex)      { createOp<CopyChannelOp> (srcIndex, dstIndex); }
-    void addAddChannelOp (int srcIndex, int dstIndex)       { createOp<AddChannelOp> (srcIndex, dstIndex); }
-    void addClearMidiBufferOp (int index)                   { createOp<ClearMidiBufferOp> (index); }
-    void addCopyMidiBufferOp (int srcIndex, int dstIndex)   { createOp<CopyMidiBufferOp> (srcIndex, dstIndex); }
-    void addAddMidiBufferOp (int srcIndex, int dstIndex)    { createOp<AddMidiBufferOp> (srcIndex, dstIndex); }
-    void addDelayChannelOp (int chan, int delaySize)        { createOp<DelayChannelOp> (chan, delaySize); }
-
-    void addProcessBufferOp (const AudioProcessorGraph::Node::Ptr& node,
-                             const Array<int>& audioChannelsUsed, int totalNumChans, int midiBuffer)
+    void addClearChannelOp (int index)
     {
-        createOp<ProcessBufferOp> (node, audioChannelsUsed, totalNumChans, midiBuffer);
+        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
+        {
+            audioBuffer.clear (index, 0);
+        });
+    }
+
+    void addCopyChannelOp (int srcIndex, int dstIndex)
+    {
+        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
+        {
+            audioBuffer.copyFrom (dstIndex, 0, audioBuffer, srcIndex, 0, audioBuffer.getNumSamples());
+        });
+    }
+
+    void addAddChannelOp (int srcIndex, int dstIndex)
+    {
+        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
+        {
+            audioBuffer.addFrom (dstIndex, 0, audioBuffer, srcIndex, 0, audioBuffer.getNumSamples());
+        });
+    }
+
+    void addClearMidiBufferOp (int index)
+    {
+        createOp ([=] (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>& midi)
+        {
+            midi.getUnchecked (index)->clear();
+        });
+    }
+
+    void addCopyMidiBufferOp (int srcIndex, int dstIndex)
+    {
+        createOp ([=] (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>& midi)
+        {
+            *midi.getUnchecked (dstIndex) = *midiBuffers.getUnchecked (srcIndex);
+        });
+    }
+
+    void addAddMidiBufferOp (int srcIndex, int dstIndex)
+    {
+        createOp ([=] (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>& midi)
+        {
+            midi.getUnchecked (dstIndex)->addEvents (*midiBuffers.getUnchecked (srcIndex), 0, audioBuffer.getNumSamples(), 0);
+        });
+    }
+
+    void addDelayChannelOp (int chan, int delaySize)
+    {
+        renderOps.add (new DelayChannelOp (chan, delaySize));
+    }
+
+    void addProcessOp (const AudioProcessorGraph::Node::Ptr& node,
+                       const Array<int>& audioChannelsUsed, int totalNumChans, int midiBuffer)
+    {
+        renderOps.add (new ProcessOp (node, audioChannelsUsed, totalNumChans, midiBuffer));
     }
 
     void prepareBuffers (int blockSize)
@@ -128,7 +173,7 @@ private:
     {
         RenderingOp() noexcept {}
         virtual ~RenderingOp() {}
-        virtual void perform (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>&, int numSamples) = 0;
+        virtual void perform (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>&) = 0;
 
         JUCE_LEAK_DETECTOR (RenderingOp)
     };
@@ -136,107 +181,23 @@ private:
     OwnedArray<RenderingOp> renderOps;
 
     //==============================================================================
-    template <typename OpType, typename... Args>
-    void createOp (Args... args) { renderOps.add (new OpType (args...)); }
-
-    //==============================================================================
-    struct ClearChannelOp  : public RenderingOp
+    template <typename LambdaType>
+    void createOp (LambdaType&& fn)
     {
-        ClearChannelOp (const int channel) noexcept  : channelNum (channel)  {}
-
-        void perform (AudioBuffer<FloatType>& sharedBufferChans, const OwnedArray<MidiBuffer>&, const int numSamples)
+        struct LambdaOp  : public RenderingOp
         {
-            sharedBufferChans.clear (channelNum, 0, numSamples);
-        }
+            LambdaOp (LambdaType&& f) : function (static_cast<LambdaType&&> (f)) {}
 
-        const int channelNum;
+            void perform (AudioBuffer<FloatType>& audio, const OwnedArray<MidiBuffer>& midi) override
+            {
+                function (audio, midi);
+            }
 
-        JUCE_DECLARE_NON_COPYABLE (ClearChannelOp)
-    };
+            LambdaType function;
+        };
 
-    //==============================================================================
-    struct CopyChannelOp  : public RenderingOp
-    {
-        CopyChannelOp (const int srcChan, const int dstChan) noexcept
-            : srcChannelNum (srcChan), dstChannelNum (dstChan)
-        {}
-
-        void perform (AudioBuffer<FloatType>& sharedBufferChans, const OwnedArray<MidiBuffer>&, const int numSamples)
-        {
-            sharedBufferChans.copyFrom (dstChannelNum, 0, sharedBufferChans, srcChannelNum, 0, numSamples);
-        }
-
-        const int srcChannelNum, dstChannelNum;
-
-        JUCE_DECLARE_NON_COPYABLE (CopyChannelOp)
-    };
-
-    //==============================================================================
-    struct AddChannelOp  : public RenderingOp
-    {
-        AddChannelOp (const int srcChan, const int dstChan) noexcept
-            : srcChannelNum (srcChan), dstChannelNum (dstChan)
-        {}
-
-        void perform (AudioBuffer<FloatType>& sharedBufferChans, const OwnedArray<MidiBuffer>&, const int numSamples)
-        {
-            sharedBufferChans.addFrom (dstChannelNum, 0, sharedBufferChans, srcChannelNum, 0, numSamples);
-        }
-
-        const int srcChannelNum, dstChannelNum;
-
-        JUCE_DECLARE_NON_COPYABLE (AddChannelOp)
-    };
-
-    //==============================================================================
-    struct ClearMidiBufferOp  : public RenderingOp
-    {
-        ClearMidiBufferOp (const int buffer) noexcept  : bufferNum (buffer)  {}
-
-        void perform (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>& sharedMidiBuffers, const int)
-        {
-            sharedMidiBuffers.getUnchecked (bufferNum)->clear();
-        }
-
-        const int bufferNum;
-
-        JUCE_DECLARE_NON_COPYABLE (ClearMidiBufferOp)
-    };
-
-    //==============================================================================
-    struct CopyMidiBufferOp  : public RenderingOp
-    {
-        CopyMidiBufferOp (const int srcBuffer, const int dstBuffer) noexcept
-            : srcBufferNum (srcBuffer), dstBufferNum (dstBuffer)
-        {}
-
-        void perform (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>& sharedMidiBuffers, const int)
-        {
-            *sharedMidiBuffers.getUnchecked (dstBufferNum) = *sharedMidiBuffers.getUnchecked (srcBufferNum);
-        }
-
-        const int srcBufferNum, dstBufferNum;
-
-        JUCE_DECLARE_NON_COPYABLE (CopyMidiBufferOp)
-    };
-
-    //==============================================================================
-    struct AddMidiBufferOp  : public RenderingOp
-    {
-        AddMidiBufferOp (const int srcBuffer, const int dstBuffer)
-            : srcBufferNum (srcBuffer), dstBufferNum (dstBuffer)
-        {}
-
-        void perform (AudioBuffer<FloatType>&, const OwnedArray<MidiBuffer>& sharedMidiBuffers, const int numSamples)
-        {
-            sharedMidiBuffers.getUnchecked (dstBufferNum)
-                ->addEvents (*sharedMidiBuffers.getUnchecked (srcBufferNum), 0, numSamples, 0);
-        }
-
-        const int srcBufferNum, dstBufferNum;
-
-        JUCE_DECLARE_NON_COPYABLE (AddMidiBufferOp)
-    };
+        renderOps.add (new LambdaOp (static_cast<LambdaType&&> (fn)));
+    }
 
     //==============================================================================
     struct DelayChannelOp  : public RenderingOp
@@ -249,11 +210,11 @@ private:
             buffer.calloc ((size_t) bufferSize);
         }
 
-        void perform (AudioBuffer<FloatType>& sharedBufferChans, const OwnedArray<MidiBuffer>&, const int numSamples)
+        void perform (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>&)
         {
-            auto* data = sharedBufferChans.getWritePointer (channel, 0);
+            auto* data = audioBuffer.getWritePointer (channel, 0);
 
-            for (int i = numSamples; --i >= 0;)
+            for (int i = audioBuffer.getNumSamples(); --i >= 0;)
             {
                 buffer[writeIndex] = *data;
                 *data++ = buffer[readIndex];
@@ -263,7 +224,6 @@ private:
             }
         }
 
-    private:
         HeapBlock<FloatType> buffer;
         const int channel, bufferSize;
         int readIndex = 0, writeIndex;
@@ -272,12 +232,11 @@ private:
     };
 
     //==============================================================================
-    struct ProcessBufferOp   : public RenderingOp
+    struct ProcessOp   : public RenderingOp
     {
-        ProcessBufferOp (const AudioProcessorGraph::Node::Ptr& n,
-                         const Array<int>& audioChannelsUsed,
-                         const int totalNumChans,
-                         const int midiBuffer)
+        ProcessOp (const AudioProcessorGraph::Node::Ptr& n,
+                   const Array<int>& audioChannelsUsed,
+                   int totalNumChans, int midiBuffer)
             : node (n),
               processor (n->getProcessor()),
               audioChannelsToUse (audioChannelsUsed),
@@ -290,12 +249,12 @@ private:
                 audioChannelsToUse.add (0);
         }
 
-        void perform (AudioBuffer<FloatType>& sharedBufferChans, const OwnedArray<MidiBuffer>& sharedMidiBuffers, const int numSamples)
+        void perform (AudioBuffer<FloatType>& audioBuffer, const OwnedArray<MidiBuffer>& sharedMidiBuffers)
         {
-            for (int i = totalChans; --i >= 0;)
-                audioChannels[i] = sharedBufferChans.getWritePointer (audioChannelsToUse.getUnchecked (i), 0);
+            for (int i = 0; i < totalChans; ++i)
+                audioChannels[i] = audioBuffer.getWritePointer (audioChannelsToUse.getUnchecked (i), 0);
 
-            AudioBuffer<FloatType> buffer (audioChannels, totalChans, numSamples);
+            AudioBuffer<FloatType> buffer (audioChannels, totalChans, audioBuffer.getNumSamples());
 
             if (processor->isSuspended())
             {
@@ -335,14 +294,12 @@ private:
         const AudioProcessorGraph::Node::Ptr node;
         AudioProcessor* const processor;
 
-    private:
         Array<int> audioChannelsToUse;
         HeapBlock<FloatType*> audioChannels;
         AudioBuffer<float> tempBuffer;
-        const int totalChans;
-        const int midiBufferToUse;
+        const int totalChans, midiBufferToUse;
 
-        JUCE_DECLARE_NON_COPYABLE (ProcessBufferOp)
+        JUCE_DECLARE_NON_COPYABLE (ProcessOp)
     };
 };
 
@@ -761,7 +718,7 @@ struct RenderSequenceBuilder
         if (numOuts == 0)
             totalLatency = maxLatency;
 
-        sequence.addProcessBufferOp (&node, audioChannelsToUse, totalChans, midiBufferToUse);
+        sequence.addProcessOp (&node, audioChannelsToUse, totalChans, midiBufferToUse);
     }
 
     //==============================================================================
