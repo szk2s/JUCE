@@ -53,6 +53,9 @@ public:
     */
     ~AudioProcessorGraph();
 
+    /** Each node in the graph has a UID of this type. */
+    typedef uint32 NodeID;
+
     //==============================================================================
     /** Represents one of the nodes, or processors, in an AudioProcessorGraph.
 
@@ -65,7 +68,7 @@ public:
         /** The ID number assigned to this node.
             This is assigned by the graph that owns it, and can't be changed.
         */
-        const uint32 nodeId;
+        const NodeID nodeId;
 
         /** The actual processor object that this node represents. */
         AudioProcessor* getProcessor() const noexcept           { return processor; }
@@ -89,7 +92,7 @@ public:
         const ScopedPointer<AudioProcessor> processor;
         bool isPrepared;
 
-        Node (uint32 nodeId, AudioProcessor*) noexcept;
+        Node (NodeID, AudioProcessor*) noexcept;
 
         void setParentGraph (AudioProcessorGraph*) const;
         void prepare (double newSampleRate, int newBlockSize, AudioProcessorGraph*, ProcessingPrecision);
@@ -106,14 +109,14 @@ public:
     struct JUCE_API  Connection
     {
         //==============================================================================
-        Connection (uint32 sourceNodeId, int sourceChannelIndex,
-                    uint32 destNodeId, int destChannelIndex) noexcept;
+        Connection (NodeID sourceNodeId, int sourceChannelIndex,
+                    NodeID destNodeId, int destChannelIndex) noexcept;
 
         //==============================================================================
         /** The ID number of the node which is the input source for this connection.
             @see AudioProcessorGraph::getNodeForId
         */
-        uint32 sourceNodeId;
+        NodeID sourceNodeId;
 
         /** The index of the output channel of the source node from which this
             connection takes its data.
@@ -127,7 +130,7 @@ public:
         /** The ID number of the node which is the destination for this connection.
             @see AudioProcessorGraph::getNodeForId
         */
-        uint32 destNodeId;
+        NodeID destNodeId;
 
         /** The index of the input channel of the destination node to which this
             connection delivers its data.
@@ -165,7 +168,7 @@ public:
         If no such node was found, this returns nullptr.
         @see getNode
     */
-    Node* getNodeForId (const uint32 nodeId) const;
+    Node* getNodeForId (NodeID) const;
 
     /** Adds a node to the graph.
 
@@ -178,17 +181,17 @@ public:
 
         If this succeeds, it returns a pointer to the newly-created node.
     */
-    Node* addNode (AudioProcessor* newProcessor, uint32 nodeId = 0);
+    Node* addNode (AudioProcessor* newProcessor, NodeID nodeId = {});
 
     /** Deletes a node within the graph which has the specified ID.
         This will also delete any connections that are attached to this node.
     */
-    bool removeNode (uint32 nodeId);
+    bool removeNode (NodeID);
 
     /** Deletes a node within the graph.
         This will also delete any connections that are attached to this node.
     */
-    bool removeNode (Node* node);
+    bool removeNode (Node*);
 
     //==============================================================================
     /** Returns the list of connections in the graph. */
@@ -203,28 +206,25 @@ public:
     /** Searches for a connection between some specified channels.
         If no such connection is found, this returns nullptr.
     */
-    const Connection* getConnectionBetween (uint32 sourceNodeId,
-                                            int sourceChannelIndex,
-                                            uint32 destNodeId,
-                                            int destChannelIndex) const;
+    const Connection* getConnectionBetween (NodeID sourceNodeId, int sourceChannelIndex,
+                                            NodeID destNodeId, int destChannelIndex) const;
 
-    /** Returns true if there is a connection between any of the channels of
+    /** Returns true if there is a direct connection between any of the channels of
         two specified nodes.
     */
-    bool isConnected (uint32 possibleSourceNodeId,
-                      uint32 possibleDestNodeId) const;
+    bool isConnected (NodeID possibleSourceNodeId, NodeID possibleDestNodeId) const;
 
     /** Returns true if it would be legal to connect the specified points. */
-    bool canConnect (uint32 sourceNodeId, int sourceChannelIndex,
-                     uint32 destNodeId, int destChannelIndex) const;
+    bool canConnect (NodeID sourceNodeId, int sourceChannelIndex,
+                     NodeID destNodeId, int destChannelIndex) const;
 
     /** Attempts to connect two specified channels of two nodes.
 
         If this isn't allowed (e.g. because you're trying to connect a midi channel
         to an audio one or other such nonsense), then it'll return false.
     */
-    bool addConnection (uint32 sourceNodeId, int sourceChannelIndex,
-                        uint32 destNodeId, int destChannelIndex);
+    bool addConnection (NodeID sourceNodeId, int sourceChannelIndex,
+                        NodeID destNodeId, int destChannelIndex);
 
     /** Deletes the connection with the specified index. */
     void removeConnection (int index);
@@ -232,11 +232,11 @@ public:
     /** Deletes any connection between two specified points.
         Returns true if a connection was actually deleted.
     */
-    bool removeConnection (uint32 sourceNodeId, int sourceChannelIndex,
-                           uint32 destNodeId, int destChannelIndex);
+    bool removeConnection (NodeID sourceNodeId, int sourceChannelIndex,
+                           NodeID destNodeId, int destChannelIndex);
 
     /** Removes all connections from the specified node. */
-    bool disconnectNode (uint32 nodeId);
+    bool disconnectNode (NodeID);
 
     /** Returns true if the given connection's channel numbers map on to valid
         channels at each end.
@@ -377,7 +377,7 @@ private:
     //==============================================================================
     ReferenceCountedArray<Node> nodes;
     OwnedArray<Connection> connections;
-    uint32 lastNodeId = 0;
+    NodeID lastNodeId = {};
 
     struct RenderSequenceFloat;
     struct RenderSequenceDouble;
@@ -391,7 +391,7 @@ private:
     void handleAsyncUpdate() override;
     void clearRenderingSequence();
     void buildRenderingSequence();
-    bool isAnInputTo (uint32 possibleInputId, uint32 possibleDestinationId, int recursionCheck) const;
+    bool isAnInputTo (NodeID src, NodeID dst, int recursionCheck) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioProcessorGraph)
 };
