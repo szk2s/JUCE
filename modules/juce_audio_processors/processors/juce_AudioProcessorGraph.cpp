@@ -67,8 +67,8 @@ struct GraphRenderSequence
         if (numSamples > maxSamples)
         {
             // being asked to render more samples than our buffers have, so slice things up...
-            MidiBuffer endMIDI;
-            endMIDI.addEvents (midiMessages, maxSamples, numSamples, -maxSamples);
+            tempMIDI.clear();
+            tempMIDI.addEvents (midiMessages, maxSamples, numSamples, -maxSamples);
 
             {
                 AudioBuffer<FloatType> startAudio (buffer.getArrayOfWritePointers(), buffer.getNumChannels(), maxSamples);
@@ -77,7 +77,7 @@ struct GraphRenderSequence
             }
 
             AudioBuffer<FloatType> endAudio (buffer.getArrayOfWritePointers(), buffer.getNumChannels(), maxSamples, numSamples - maxSamples);
-            perform (endAudio, endMIDI);
+            perform (endAudio, tempMIDI);
             return;
         }
 
@@ -161,6 +161,13 @@ struct GraphRenderSequence
 
         midiBuffers.clearQuick();
         midiBuffers.resize (numMidiBuffersNeeded);
+
+        const int defaultMIDIBufferSize = 512;
+
+        tempMIDI.ensureSize (defaultMIDIBufferSize);
+
+        for (auto&& m : midiBuffers)
+            m.ensureSize (defaultMIDIBufferSize);
     }
 
     void releaseBuffers()
@@ -182,6 +189,7 @@ struct GraphRenderSequence
     MidiBuffer currentMidiOutputBuffer;
 
     Array<MidiBuffer> midiBuffers;
+    MidiBuffer tempMIDI;
 
 private:
     //==============================================================================
@@ -632,13 +640,9 @@ struct RenderSequenceBuilder
         // Now the same thing for midi..
         Array<NodeID> midiSourceNodes;
 
-        for (int i = graph.getNumConnections(); --i >= 0;)
-        {
-            auto* c = graph.getConnection (i);
-
+        for (auto* c : graph.getConnections())
             if (c->destNodeId == node.nodeId && c->destChannelIndex == AudioProcessorGraph::midiChannelIndex)
                 midiSourceNodes.add (c->sourceNodeId);
-        }
 
         if (midiSourceNodes.isEmpty())
         {
