@@ -41,10 +41,12 @@ class FilterGraph   : public FileBasedDocument,
 {
 public:
     //==============================================================================
-    FilterGraph (AudioPluginFormatManager& formatManager);
+    FilterGraph (AudioPluginFormatManager&);
     ~FilterGraph();
 
     //==============================================================================
+    typedef AudioProcessorGraph::NodeID NodeID;
+
     AudioProcessorGraph& getGraph() noexcept         { return graph; }
 
     int getNumFilters() const noexcept;
@@ -54,8 +56,6 @@ public:
     AudioProcessorGraph::Node::Ptr getNodeForName (const String& name) const;
 
     void addFilter (const PluginDescription&, Point<double>);
-
-    void addFilterCallback (AudioPluginInstance*, const String& error, Point<double> pos);
 
     void removeFilter (uint32 filterUID);
     void disconnectFilter (uint32 filterUID);
@@ -68,14 +68,10 @@ public:
     //==============================================================================
     const std::vector<AudioProcessorGraph::Connection> getConnections() const noexcept      { return graph.getConnections(); }
 
-    bool addConnection (uint32 sourceFilterUID, int sourceFilterChannel,
-                        uint32 destFilterUID, int destFilterChannel);
-
-    void removeConnection (uint32 sourceFilterUID, int sourceFilterChannel,
-                           uint32 destFilterUID, int destFilterChannel);
+    bool addConnection (const AudioProcessorGraph::Connection&);
+    void removeConnection (const AudioProcessorGraph::Connection&);
 
     void clear();
-
 
     //==============================================================================
     void audioProcessorParameterChanged (AudioProcessor*, int, float) override {}
@@ -109,6 +105,7 @@ private:
     uint32 getNextUID() noexcept;
 
     void createNodeFromXml (const XmlElement& xml);
+    void addFilterCallback (AudioPluginInstance*, const String& error, Point<double>);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FilterGraph)
 };

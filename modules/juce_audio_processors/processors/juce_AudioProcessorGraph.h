@@ -90,7 +90,7 @@ public:
         friend class AudioProcessorGraph;
 
         const ScopedPointer<AudioProcessor> processor;
-        bool isPrepared;
+        bool isPrepared = false;
 
         Node (NodeID, AudioProcessor*) noexcept;
 
@@ -379,6 +379,7 @@ private:
     void handleAsyncUpdate() override;
     void clearRenderingSequence();
     void buildRenderingSequence();
+    bool anyNodesNeedPreparing() const noexcept;
     bool isAnInputTo (NodeID src, NodeID dst, int recursionCheck) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioProcessorGraph)

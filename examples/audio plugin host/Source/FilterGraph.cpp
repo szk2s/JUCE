@@ -81,11 +81,10 @@ AudioProcessorGraph::Node::Ptr FilterGraph::getNodeForId (uint32 uid) const
 
 AudioProcessorGraph::Node::Ptr FilterGraph::getNodeForName (const String& name) const
 {
-    for (int i = 0; i < graph.getNumNodes(); i++)
-        if (auto node = graph.getNode (i))
-            if (auto p = node->getProcessor())
-                if (p->getName().equalsIgnoreCase (name))
-                    return node;
+    for (auto* node : graph.getNodes())
+        if (auto p = node->getProcessor())
+            if (p->getName().equalsIgnoreCase (name))
+                return node;
 
     return nullptr;
 }
@@ -170,10 +169,9 @@ Point<double> FilterGraph::getNodePosition (const uint32 nodeId) const
 }
 
 //==============================================================================
-bool FilterGraph::addConnection (uint32 sourceFilterUID, int sourceFilterChannel,
-                                 uint32 destFilterUID, int destFilterChannel)
+bool FilterGraph::addConnection (const AudioProcessorGraph::Connection& c)
 {
-    bool result = graph.addConnection ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel });
+    bool result = graph.addConnection (c);
 
     if (result)
         changed();
@@ -181,10 +179,9 @@ bool FilterGraph::addConnection (uint32 sourceFilterUID, int sourceFilterChannel
     return result;
 }
 
-void FilterGraph::removeConnection (uint32 sourceFilterUID, int sourceFilterChannel,
-                                    uint32 destFilterUID, int destFilterChannel)
+void FilterGraph::removeConnection (const AudioProcessorGraph::Connection& c)
 {
-    if (graph.removeConnection ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel }))
+    if (graph.removeConnection (c))
         changed();
 }
 
@@ -469,10 +466,10 @@ void FilterGraph::restoreFromXml (const XmlElement& xml)
 
     forEachXmlChildElementWithTagName (xml, e, "CONNECTION")
     {
-        addConnection ((uint32) e->getIntAttribute ("srcFilter"),
-                       e->getIntAttribute ("srcChannel"),
-                       (uint32) e->getIntAttribute ("dstFilter"),
-                       e->getIntAttribute ("dstChannel"));
+        addConnection ({ (NodeID) e->getIntAttribute ("srcFilter"),
+                          e->getIntAttribute ("srcChannel"),
+                          (NodeID) e->getIntAttribute ("dstFilter"),
+                          e->getIntAttribute ("dstChannel") });
     }
 
     graph.removeIllegalConnections();

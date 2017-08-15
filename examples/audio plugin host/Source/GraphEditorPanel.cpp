@@ -559,22 +559,22 @@ struct ConnectorComponent   : public Component,
         setAlwaysOnTop (true);
     }
 
-    void setInput (uint32 newSourceID, int newSourceChannel)
+    void setInput (uint32 newNodeID, int newChannel)
     {
-        if (sourceFilterID != newSourceID || sourceFilterChannel != newSourceChannel)
+        if (connection.sourceNodeId != newNodeID || connection.sourceChannelIndex != newChannel)
         {
-            sourceFilterID = newSourceID;
-            sourceFilterChannel = newSourceChannel;
+            connection.sourceNodeId = newNodeID;
+            connection.sourceChannelIndex = newChannel;
             update();
         }
     }
 
-    void setOutput (uint32 newDestID, int newDestChannel)
+    void setOutput (uint32 newNodeID, int newChannel)
     {
-        if (destFilterID != newDestID || destFilterChannel != newDestChannel)
+        if (connection.destNodeId != newNodeID || connection.destChannelIndex != newChannel)
         {
-            destFilterID = newDestID;
-            destFilterChannel = newDestChannel;
+            connection.destNodeId = newNodeID;
+            connection.destChannelIndex = newChannel;
             update();
         }
     }
@@ -622,18 +622,18 @@ struct ConnectorComponent   : public Component,
 
         if (auto* hostPanel = getGraphPanel())
         {
-            if (auto* src = hostPanel->getComponentForFilter (sourceFilterID))
-                p1 = src->getPinPos (sourceFilterChannel, false);
+            if (auto* src = hostPanel->getComponentForFilter (connection.sourceNodeId))
+                p1 = src->getPinPos (connection.sourceChannelIndex, false);
 
-            if (auto* dest = hostPanel->getComponentForFilter (destFilterID))
-                p2 = dest->getPinPos (destFilterChannel, true);
+            if (auto* dest = hostPanel->getComponentForFilter (connection.destNodeId))
+                p2 = dest->getPinPos (connection.destChannelIndex, true);
         }
     }
 
     void paint (Graphics& g) override
     {
-        if (sourceFilterChannel == FilterGraph::midiChannelNumber
-             || destFilterChannel == FilterGraph::midiChannelNumber)
+        if (connection.sourceChannelIndex == FilterGraph::midiChannelNumber
+             || connection.destChannelIndex == FilterGraph::midiChannelNumber)
         {
             g.setColour (Colours::red);
         }
@@ -676,16 +676,14 @@ struct ConnectorComponent   : public Component,
         {
             dragging = true;
 
-            graph.removeConnection (sourceFilterID, sourceFilterChannel, destFilterID, destFilterChannel);
+            graph.removeConnection (connection);
 
             double distanceFromStart, distanceFromEnd;
-            getDistancesFromEnds (e.position, distanceFromStart, distanceFromEnd);
+            getDistancesFromEnds (getPosition().toFloat() + e.position, distanceFromStart, distanceFromEnd);
             const bool isNearerSource = (distanceFromStart < distanceFromEnd);
 
-            getGraphPanel()->beginConnectorDrag (isNearerSource ? 0 : sourceFilterID,
-                                                 sourceFilterChannel,
-                                                 isNearerSource ? destFilterID : 0,
-                                                 destFilterChannel,
+            getGraphPanel()->beginConnectorDrag (isNearerSource ? 0 : connection.sourceNodeId, connection.sourceChannelIndex,
+                                                 isNearerSource ? connection.destNodeId : 0,   connection.destChannelIndex,
                                                  e);
         }
     }
@@ -750,8 +748,7 @@ struct ConnectorComponent   : public Component,
     }
 
     FilterGraph& graph;
-    uint32 sourceFilterID = 0, destFilterID = 0;
-    int sourceFilterChannel = 0, destFilterChannel = 0;
+    AudioProcessorGraph::Connection connection { 0, 0, 0, 0 };
     Point<float> lastInputPos, lastOutputPos;
     Path linePath, hitPath;
     bool dragging = false;
@@ -815,14 +812,9 @@ FilterComponent* GraphEditorPanel::getComponentForFilter (const uint32 filterID)
 ConnectorComponent* GraphEditorPanel::getComponentForConnection (const AudioProcessorGraph::Connection& conn) const
 {
     for (auto* child : getChildren())
-    {
-        if (auto* c = dynamic_cast<ConnectorComponent*> (child))
-            if (c->sourceFilterID == conn.sourceNodeId
-                 && c->destFilterID == conn.destNodeId
-                 && c->sourceFilterChannel == conn.sourceChannelIndex
-                 && c->destFilterChannel == conn.destChannelIndex)
-                return c;
-    }
+        if (auto* cc = dynamic_cast<ConnectorComponent*> (child))
+            if (cc->connection == conn)
+                return cc;
 
     return nullptr;
 }
@@ -860,22 +852,15 @@ void GraphEditorPanel::updateComponents()
 
         if (cc != nullptr && cc != draggingConnector)
         {
-            if (! graph.getGraph().isConnected ({ cc->sourceFilterID, cc->sourceFilterChannel,
-                                                  cc->destFilterID, cc->destFilterChannel }))
-            {
+            if (! graph.getGraph().isConnected (cc->connection))
                 delete cc;
-            }
             else
-            {
                 cc->update();
-            }
         }
     }
 
-    for (int i = graph.getNumFilters(); --i >= 0;)
+    for (auto* f : graph.getGraph().getNodes())
     {
-        auto f = graph.getNode (i);
-
         if (getComponentForFilter (f->nodeId) == 0)
         {
             auto* comp = new FilterComponent (graph, f->nodeId);
@@ -927,30 +912,27 @@ void GraphEditorPanel::dragConnector (const MouseEvent& e)
 
         if (auto* pin = findPinAt (pos))
         {
-            auto srcFilter  = draggingConnector->sourceFilterID;
-            auto srcChannel = draggingConnector->sourceFilterChannel;
-            auto dstFilter  = draggingConnector->destFilterID;
-            auto dstChannel = draggingConnector->destFilterChannel;
+            auto connection = draggingConnector->connection;
 
-            if (srcFilter == 0 && ! pin->isInput)
+            if (connection.sourceNodeId == 0 && ! pin->isInput)
             {
-                srcFilter = pin->pluginID;
-                srcChannel = pin->index;
+                connection.sourceNodeId = pin->pluginID;
+                connection.sourceChannelIndex = pin->index;
             }
-            else if (dstFilter == 0 && pin->isInput)
+            else if (connection.destNodeId == 0 && pin->isInput)
             {
-                dstFilter = pin->pluginID;
-                dstChannel = pin->index;
+                connection.destNodeId = pin->pluginID;
+                connection.destChannelIndex = pin->index;
             }
 
-            if (graph.getGraph().canConnect ({ srcFilter, srcChannel, dstFilter, dstChannel }))
+            if (graph.getGraph().canConnect (connection))
             {
                 pos = (pin->getParentComponent()->getPosition() + pin->getBounds().getCentre()).toFloat();
                 draggingConnector->setTooltip (pin->getTooltip());
             }
         }
 
-        if (draggingConnector->sourceFilterID == 0)
+        if (draggingConnector->connection.sourceNodeId == 0)
             draggingConnector->dragStart (pos);
         else
             draggingConnector->dragEnd (pos);
@@ -965,34 +947,30 @@ void GraphEditorPanel::endDraggingConnector (const MouseEvent& e)
     draggingConnector->setTooltip ({});
 
     auto e2 = e.getEventRelativeTo (this);
-
-    auto srcFilter  = draggingConnector->sourceFilterID;
-    auto srcChannel = draggingConnector->sourceFilterChannel;
-    auto dstFilter  = draggingConnector->destFilterID;
-    auto dstChannel = draggingConnector->destFilterChannel;
+    auto connection = draggingConnector->connection;
 
     draggingConnector = nullptr;
 
     if (auto* pin = findPinAt (e2.position))
     {
-        if (srcFilter == 0)
+        if (connection.sourceNodeId == 0)
         {
             if (pin->isInput)
                 return;
 
-            srcFilter = pin->pluginID;
-            srcChannel = pin->index;
+            connection.sourceNodeId = pin->pluginID;
+            connection.sourceChannelIndex = pin->index;
         }
         else
         {
             if (! pin->isInput)
                 return;
 
-            dstFilter = pin->pluginID;
-            dstChannel = pin->index;
+            connection.destNodeId = pin->pluginID;
+            connection.destChannelIndex = pin->index;
         }
 
-        graph.addConnection (srcFilter, srcChannel, dstFilter, dstChannel);
+        graph.addConnection (connection);
     }
 }
 

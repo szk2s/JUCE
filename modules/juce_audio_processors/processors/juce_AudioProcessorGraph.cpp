@@ -258,14 +258,9 @@ private:
             AudioBuffer<FloatType> buffer (audioChannels, totalChans, c.numSamples);
 
             if (processor.isSuspended())
-            {
                 buffer.clear();
-            }
             else
-            {
-                ScopedLock lock (processor.getCallbackLock());
                 callProcess (buffer, c.midiBuffers[midiBufferToUse]);
-            }
         }
 
         void callProcess (AudioBuffer<float>& buffer, MidiBuffer& midiMessages)
@@ -1142,9 +1137,9 @@ bool AudioProcessorGraph::isConnectionLegal (const Connection& c) const
     if (auto* source = getNodeForId (c.sourceNodeId))
         if (auto* dest = getNodeForId (c.destNodeId))
             return (c.sourceChannelIndex != midiChannelIndex ? isPositiveAndBelow (c.sourceChannelIndex, source->processor->getTotalNumOutputChannels())
-                                                              : source->processor->producesMidi())
+                                                             : source->processor->producesMidi())
                 && (c.destChannelIndex   != midiChannelIndex ? isPositiveAndBelow (c.destChannelIndex, dest->processor->getTotalNumInputChannels())
-                                                              : dest->processor->acceptsMidi());
+                                                             : dest->processor->acceptsMidi());
 
     return false;
 }
@@ -1186,33 +1181,46 @@ bool AudioProcessorGraph::isAnInputTo (NodeID src, NodeID dst, int recursionChec
     return false;
 }
 
+bool AudioProcessorGraph::anyNodesNeedPreparing() const noexcept
+{
+    for (auto* node : nodes)
+        if (! node->isPrepared)
+            return true;
+
+    return false;
+}
+
 void AudioProcessorGraph::buildRenderingSequence()
 {
-    ScopedPointer<RenderSequenceFloat> newSequenceF;
-    ScopedPointer<RenderSequenceDouble> newSequenceD;
+    ScopedPointer<RenderSequenceFloat>  newSequenceF (new RenderSequenceFloat());
+    ScopedPointer<RenderSequenceDouble> newSequenceD (new RenderSequenceDouble());
 
     {
         MessageManagerLock mml;
 
+        RenderSequenceBuilder<RenderSequenceFloat>  builderF (*this, *newSequenceF);
+        RenderSequenceBuilder<RenderSequenceDouble> builderD (*this, *newSequenceD);
+    }
+
+    newSequenceF->prepareBuffers (getBlockSize());
+    newSequenceD->prepareBuffers (getBlockSize());
+
+    if (anyNodesNeedPreparing())
+    {
+        {
+            const ScopedLock sl (getCallbackLock());
+            renderSequenceFloat = nullptr;
+            renderSequenceDouble = nullptr;
+        }
+
         for (auto* node : nodes)
             node->prepare (getSampleRate(), getBlockSize(), this, getProcessingPrecision());
-
-        newSequenceF = new RenderSequenceFloat();
-        newSequenceD = new RenderSequenceDouble();
-
-        RenderSequenceBuilder<RenderSequenceFloat> builderF (*this, *newSequenceF);
-        RenderSequenceBuilder<RenderSequenceDouble> builderD (*this, *newSequenceD);
-
-        newSequenceF->prepareBuffers (getBlockSize());
-        newSequenceD->prepareBuffers (getBlockSize());
     }
 
-    {
-        // swap over to the new rendering sequence..
-        const ScopedLock sl (getCallbackLock());
-        renderSequenceFloat.swapWith (newSequenceF);
-        renderSequenceDouble.swapWith (newSequenceD);
-    }
+    const ScopedLock sl (getCallbackLock());
+
+    renderSequenceFloat.swapWith (newSequenceF);
+    renderSequenceDouble.swapWith (newSequenceD);
 }
 
 void AudioProcessorGraph::handleAsyncUpdate()
@@ -1290,12 +1298,16 @@ void AudioProcessorGraph::setStateInformation (const void*, int)    {}
 
 void AudioProcessorGraph::processBlock (AudioBuffer<float>& buffer, MidiBuffer& midiMessages)
 {
+    const ScopedLock sl (getCallbackLock());
+
     if (renderSequenceFloat != nullptr)
         renderSequenceFloat->perform (buffer, midiMessages);
 }
 
 void AudioProcessorGraph::processBlock (AudioBuffer<double>& buffer, MidiBuffer& midiMessages)
 {
+    const ScopedLock sl (getCallbackLock());
+
     if (renderSequenceDouble != nullptr)
         renderSequenceDouble->perform (buffer, midiMessages);
 }
