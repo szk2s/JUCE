@@ -170,35 +170,22 @@ Point<double> FilterGraph::getNodePosition (const uint32 nodeId) const
 }
 
 //==============================================================================
-int FilterGraph::getNumConnections() const noexcept
+bool FilterGraph::isConnected (uint32 sourceFilterUID, int sourceFilterChannel,
+                               uint32 destFilterUID, int destFilterChannel) const noexcept
 {
-    return graph.getNumConnections();
-}
-
-const AudioProcessorGraph::Connection* FilterGraph::getConnection (const int index) const noexcept
-{
-    return graph.getConnection (index);
-}
-
-const AudioProcessorGraph::Connection* FilterGraph::getConnectionBetween (uint32 sourceFilterUID, int sourceFilterChannel,
-                                                                          uint32 destFilterUID, int destFilterChannel) const noexcept
-{
-    return graph.getConnectionBetween (sourceFilterUID, sourceFilterChannel,
-                                       destFilterUID, destFilterChannel);
+    return graph.isConnected ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel });
 }
 
 bool FilterGraph::canConnect (uint32 sourceFilterUID, int sourceFilterChannel,
                               uint32 destFilterUID, int destFilterChannel) const noexcept
 {
-    return graph.canConnect (sourceFilterUID, sourceFilterChannel,
-                             destFilterUID, destFilterChannel);
+    return graph.canConnect ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel });
 }
 
 bool FilterGraph::addConnection (uint32 sourceFilterUID, int sourceFilterChannel,
                                  uint32 destFilterUID, int destFilterChannel)
 {
-    const bool result = graph.addConnection (sourceFilterUID, sourceFilterChannel,
-                                             destFilterUID, destFilterChannel);
+    bool result = graph.addConnection ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel });
 
     if (result)
         changed();
@@ -206,17 +193,10 @@ bool FilterGraph::addConnection (uint32 sourceFilterUID, int sourceFilterChannel
     return result;
 }
 
-void FilterGraph::removeConnection (const int index)
-{
-    graph.removeConnection (index);
-    changed();
-}
-
 void FilterGraph::removeConnection (uint32 sourceFilterUID, int sourceFilterChannel,
                                     uint32 destFilterUID, int destFilterChannel)
 {
-    if (graph.removeConnection (sourceFilterUID, sourceFilterChannel,
-                                destFilterUID, destFilterChannel))
+    if (graph.removeConnection ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel }))
         changed();
 }
 
@@ -476,18 +456,14 @@ XmlElement* FilterGraph::createXml() const
     for (int i = 0; i < graph.getNumNodes(); ++i)
         xml->addChildElement (createNodeXml (graph.getNode (i)));
 
-    for (int i = 0; i < graph.getNumConnections(); ++i)
+    for (auto& connection : graph.getConnections())
     {
-        const AudioProcessorGraph::Connection* const fc = graph.getConnection(i);
+        auto e = xml->createNewChildElement ("CONNECTION");
 
-        XmlElement* e = new XmlElement ("CONNECTION");
-
-        e->setAttribute ("srcFilter", (int) fc->sourceNodeId);
-        e->setAttribute ("srcChannel", fc->sourceChannelIndex);
-        e->setAttribute ("dstFilter", (int) fc->destNodeId);
-        e->setAttribute ("dstChannel", fc->destChannelIndex);
-
-        xml->addChildElement (e);
+        e->setAttribute ("srcFilter", (int) connection.sourceNodeId);
+        e->setAttribute ("srcChannel", connection.sourceChannelIndex);
+        e->setAttribute ("dstFilter", (int) connection.destNodeId);
+        e->setAttribute ("dstChannel", connection.destChannelIndex);
     }
 
     return xml;

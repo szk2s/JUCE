@@ -36,7 +36,8 @@ const char* const filenameWildcard = "*.filtergraph";
 /**
     A collection of filters and some connections between them.
 */
-class FilterGraph   : public FileBasedDocument, public AudioProcessorListener
+class FilterGraph   : public FileBasedDocument,
+                      public AudioProcessorListener
 {
 public:
     //==============================================================================
@@ -65,19 +66,16 @@ public:
     Point<double> getNodePosition (uint32 nodeId) const;
 
     //==============================================================================
-    int getNumConnections() const noexcept;
-    const AudioProcessorGraph::Connection* getConnection (const int index) const noexcept;
+    const std::vector<AudioProcessorGraph::Connection> getConnections() const noexcept      { return graph.getConnections(); }
 
-    const AudioProcessorGraph::Connection* getConnectionBetween (uint32 sourceFilterUID, int sourceFilterChannel,
-                                                                 uint32 destFilterUID, int destFilterChannel) const noexcept;
+    bool isConnected (uint32 sourceFilterUID, int sourceFilterChannel,
+                      uint32 destFilterUID, int destFilterChannel) const noexcept;
 
     bool canConnect (uint32 sourceFilterUID, int sourceFilterChannel,
                      uint32 destFilterUID, int destFilterChannel) const noexcept;
 
     bool addConnection (uint32 sourceFilterUID, int sourceFilterChannel,
                         uint32 destFilterUID, int destFilterChannel);
-
-    void removeConnection (const int index);
 
     void removeConnection (uint32 sourceFilterUID, int sourceFilterChannel,
                            uint32 destFilterUID, int destFilterChannel);

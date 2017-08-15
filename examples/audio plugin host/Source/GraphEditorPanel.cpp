@@ -860,8 +860,8 @@ void GraphEditorPanel::updateComponents()
 
         if (cc != nullptr && cc != draggingConnector)
         {
-            if (graph.getConnectionBetween (cc->sourceFilterID, cc->sourceFilterChannel,
-                                            cc->destFilterID, cc->destFilterChannel) == nullptr)
+            if (! graph.isConnected (cc->sourceFilterID, cc->sourceFilterChannel,
+                                     cc->destFilterID, cc->destFilterChannel))
             {
                 delete cc;
             }
@@ -884,17 +884,15 @@ void GraphEditorPanel::updateComponents()
         }
     }
 
-    for (int i = graph.getNumConnections(); --i >= 0;)
+    for (auto& c : graph.getConnections())
     {
-        auto* c = graph.getConnection (i);
-
-        if (getComponentForConnection (*c) == 0)
+        if (getComponentForConnection (c) == 0)
         {
             auto* comp = new ConnectorComponent (graph);
             addAndMakeVisible (comp);
 
-            comp->setInput (c->sourceNodeId, c->sourceChannelIndex);
-            comp->setOutput (c->destNodeId, c->destChannelIndex);
+            comp->setInput (c.sourceNodeId, c.sourceChannelIndex);
+            comp->setOutput (c.destNodeId, c.destChannelIndex);
         }
     }
 }

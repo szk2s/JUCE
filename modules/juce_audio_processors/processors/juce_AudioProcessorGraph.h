@@ -109,11 +109,18 @@ public:
     struct JUCE_API  Connection
     {
         //==============================================================================
-        Connection (NodeID sourceNodeId, int sourceChannelIndex,
-                    NodeID destNodeId, int destChannelIndex) noexcept;
+        Connection (NodeID sourceNodeID, int sourceChannelIndex,
+                    NodeID destNodeID, int destChannelIndex) noexcept;
+
+        Connection (const Connection&) = default;
+        Connection& operator= (const Connection&) = default;
+
+        bool operator== (const Connection&) const noexcept;
+        bool operator!= (const Connection&) const noexcept;
+        bool operator<  (const Connection&) const noexcept;
 
         //==============================================================================
-        /** The ID number of the node which is the input source for this connection.
+        /** The ID of the node which is the input source for this connection.
             @see AudioProcessorGraph::getNodeForId
         */
         NodeID sourceNodeId;
@@ -140,10 +147,6 @@ public:
             index of an audio input channel in the destination node.
         */
         int destChannelIndex;
-
-    private:
-        //==============================================================================
-        JUCE_LEAK_DETECTOR (Connection)
     };
 
     //==============================================================================
@@ -195,45 +198,28 @@ public:
 
     //==============================================================================
     /** Returns the list of connections in the graph. */
-    const OwnedArray<Connection>& getConnections() const noexcept       { return connections; }
+    const std::vector<Connection>& getConnections() const noexcept            { sortConnections(); return connections; }
 
-    /** Returns the number of connections in the graph. */
-    int getNumConnections() const                                       { return connections.size(); }
-
-    /** Returns a pointer to one of the connections in the graph. */
-    const Connection* getConnection (int index) const                   { return connections [index]; }
-
-    /** Searches for a connection between some specified channels.
-        If no such connection is found, this returns nullptr.
-    */
-    const Connection* getConnectionBetween (NodeID sourceNodeId, int sourceChannelIndex,
-                                            NodeID destNodeId, int destChannelIndex) const;
+    /** Returns true if the given connection exists. */
+    bool isConnected (const Connection&) const noexcept;
 
     /** Returns true if there is a direct connection between any of the channels of
         two specified nodes.
     */
-    bool isConnected (NodeID possibleSourceNodeId, NodeID possibleDestNodeId) const;
+    bool isConnected (NodeID possibleSourceNodeID, NodeID possibleDestNodeID) const noexcept;
 
     /** Returns true if it would be legal to connect the specified points. */
-    bool canConnect (NodeID sourceNodeId, int sourceChannelIndex,
-                     NodeID destNodeId, int destChannelIndex) const;
+    bool canConnect (const Connection&) const;
 
     /** Attempts to connect two specified channels of two nodes.
 
         If this isn't allowed (e.g. because you're trying to connect a midi channel
         to an audio one or other such nonsense), then it'll return false.
     */
-    bool addConnection (NodeID sourceNodeId, int sourceChannelIndex,
-                        NodeID destNodeId, int destChannelIndex);
+    bool addConnection (const Connection&);
 
-    /** Deletes the connection with the specified index. */
-    void removeConnection (int index);
-
-    /** Deletes any connection between two specified points.
-        Returns true if a connection was actually deleted.
-    */
-    bool removeConnection (NodeID sourceNodeId, int sourceChannelIndex,
-                           NodeID destNodeId, int destChannelIndex);
+    /** Deletes the given connection. */
+    bool removeConnection (const Connection&);
 
     /** Removes all connections from the specified node. */
     bool disconnectNode (NodeID);
@@ -243,7 +229,7 @@ public:
         Even if a connection is valid when created, its status could change if
         a node changes its channel config.
     */
-    bool isConnectionLegal (const Connection* connection) const;
+    bool isConnectionLegal (const Connection&) const;
 
     /** Performs a sanity checks of all the connections.
 
@@ -376,7 +362,8 @@ public:
 private:
     //==============================================================================
     ReferenceCountedArray<Node> nodes;
-    OwnedArray<Connection> connections;
+    std::vector<Connection> connections;
+    bool connectionsNeedSorting = false;
     NodeID lastNodeId = {};
 
     struct RenderSequenceFloat;
@@ -388,6 +375,7 @@ private:
 
     bool isPrepared = false;
 
+    void sortConnections() const noexcept;
     void handleAsyncUpdate() override;
     void clearRenderingSequence();
     void buildRenderingSequence();
