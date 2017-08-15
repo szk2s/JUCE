@@ -860,8 +860,8 @@ void GraphEditorPanel::updateComponents()
 
         if (cc != nullptr && cc != draggingConnector)
         {
-            if (! graph.isConnected (cc->sourceFilterID, cc->sourceFilterChannel,
-                                     cc->destFilterID, cc->destFilterChannel))
+            if (! graph.getGraph().isConnected ({ cc->sourceFilterID, cc->sourceFilterChannel,
+                                                  cc->destFilterID, cc->destFilterChannel }))
             {
                 delete cc;
             }
@@ -943,7 +943,7 @@ void GraphEditorPanel::dragConnector (const MouseEvent& e)
                 dstChannel = pin->index;
             }
 
-            if (graph.canConnect (srcFilter, srcChannel, dstFilter, dstChannel))
+            if (graph.getGraph().canConnect ({ srcFilter, srcChannel, dstFilter, dstChannel }))
             {
                 pos = (pin->getParentComponent()->getPosition() + pin->getBounds().getCentre()).toFloat();
                 draggingConnector->setTooltip (pin->getTooltip());

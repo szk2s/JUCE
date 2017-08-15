@@ -131,7 +131,7 @@ void FilterGraph::addFilterCallback (AudioPluginInstance* instance, const String
     }
 }
 
-void FilterGraph::removeFilter (const uint32 id)
+void FilterGraph::removeFilter (uint32 id)
 {
     PluginWindow::closeCurrentlyOpenWindowsFor (id);
 
@@ -139,7 +139,7 @@ void FilterGraph::removeFilter (const uint32 id)
         changed();
 }
 
-void FilterGraph::disconnectFilter (const uint32 id)
+void FilterGraph::disconnectFilter (uint32 id)
 {
     if (graph.disconnectNode (id))
         changed();
@@ -170,18 +170,6 @@ Point<double> FilterGraph::getNodePosition (const uint32 nodeId) const
 }
 
 //==============================================================================
-bool FilterGraph::isConnected (uint32 sourceFilterUID, int sourceFilterChannel,
-                               uint32 destFilterUID, int destFilterChannel) const noexcept
-{
-    return graph.isConnected ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel });
-}
-
-bool FilterGraph::canConnect (uint32 sourceFilterUID, int sourceFilterChannel,
-                              uint32 destFilterUID, int destFilterChannel) const noexcept
-{
-    return graph.canConnect ({ sourceFilterUID, sourceFilterChannel, destFilterUID, destFilterChannel });
-}
-
 bool FilterGraph::addConnection (uint32 sourceFilterUID, int sourceFilterChannel,
                                  uint32 destFilterUID, int destFilterChannel)
 {

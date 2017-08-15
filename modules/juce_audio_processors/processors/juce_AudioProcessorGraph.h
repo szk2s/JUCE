@@ -362,8 +362,8 @@ public:
 private:
     //==============================================================================
     ReferenceCountedArray<Node> nodes;
-    std::vector<Connection> connections;
-    bool connectionsNeedSorting = false;
+    mutable std::vector<Connection> connections;
+    mutable bool connectionsNeedSorting = false;
     NodeID lastNodeId = {};
 
     struct RenderSequenceFloat;

@@ -57,8 +57,8 @@ public:
 
     void addFilterCallback (AudioPluginInstance*, const String& error, Point<double> pos);
 
-    void removeFilter (const uint32 filterUID);
-    void disconnectFilter (const uint32 filterUID);
+    void removeFilter (uint32 filterUID);
+    void disconnectFilter (uint32 filterUID);
 
     void removeIllegalConnections();
 
@@ -67,12 +67,6 @@ public:
 
     //==============================================================================
     const std::vector<AudioProcessorGraph::Connection> getConnections() const noexcept      { return graph.getConnections(); }
-
-    bool isConnected (uint32 sourceFilterUID, int sourceFilterChannel,
-                      uint32 destFilterUID, int destFilterChannel) const noexcept;
-
-    bool canConnect (uint32 sourceFilterUID, int sourceFilterChannel,
-                     uint32 destFilterUID, int destFilterChannel) const noexcept;
 
     bool addConnection (uint32 sourceFilterUID, int sourceFilterChannel,
                         uint32 destFilterUID, int destFilterChannel);

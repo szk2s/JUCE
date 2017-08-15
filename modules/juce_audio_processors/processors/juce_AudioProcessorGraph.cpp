@@ -376,9 +376,9 @@ struct RenderSequenceBuilder
     {
         int maxLatency = 0;
 
-        for (auto* c : graph.getConnections())
-            if (c->destNodeId == nodeID)
-                maxLatency = jmax (maxLatency, getNodeDelay (c->sourceNodeId));
+        for (auto&& c : graph.getConnections())
+            if (c.destNodeId == nodeID)
+                maxLatency = jmax (maxLatency, getNodeDelay (c.sourceNodeId));
 
         return maxLatency;
     }
@@ -390,8 +390,8 @@ struct RenderSequenceBuilder
         template <typename ConnectionList>
         explicit NodeInputLookupTable (const ConnectionList& connections)
         {
-            for (auto* c : connections)
-                entries[c->destNodeId].add (c->sourceNodeId);
+            for (auto&& c : connections)
+                entries[c.destNodeId].add (c.sourceNodeId);
         }
 
         bool isAnInputTo (NodeID sourceID, NodeID destID) const noexcept
@@ -456,12 +456,12 @@ struct RenderSequenceBuilder
             Array<NodeID> sourceNodes;
             Array<int> sourceOutputChans;
 
-            for (auto* c : graph.getConnections())
+            for (auto&& c : graph.getConnections())
             {
-                if (c->destNodeId == node.nodeId && c->destChannelIndex == inputChan)
+                if (c.destNodeId == node.nodeId && c.destChannelIndex == inputChan)
                 {
-                    sourceNodes.add (c->sourceNodeId);
-                    sourceOutputChans.add (c->sourceChannelIndex);
+                    sourceNodes.add (c.sourceNodeId);
+                    sourceOutputChans.add (c.sourceChannelIndex);
                 }
             }
 
@@ -620,9 +620,9 @@ struct RenderSequenceBuilder
         // Now the same thing for midi..
         Array<NodeID> midiSourceNodes;
 
-        for (auto* c : graph.getConnections())
-            if (c->destNodeId == node.nodeId && c->destChannelIndex == AudioProcessorGraph::midiChannelIndex)
-                midiSourceNodes.add (c->sourceNodeId);
+        for (auto&& c : graph.getConnections())
+            if (c.destNodeId == node.nodeId && c.destChannelIndex == AudioProcessorGraph::midiChannelIndex)
+                midiSourceNodes.add (c.sourceNodeId);
 
         if (midiSourceNodes.isEmpty())
         {
@@ -1041,10 +1041,10 @@ bool AudioProcessorGraph::isConnected (const Connection& c) const noexcept
         if (halfway == s)
             break;
 
-        if (connections[halfway] < c)
-            s = halfway;
-        else
+        if (c < connections[halfway])
             e = halfway;
+        else
+            s = halfway;
     }
 
     return false;
@@ -1098,6 +1098,15 @@ bool AudioProcessorGraph::addConnection (const Connection& c)
         triggerAsyncUpdate();
 
     return true;
+}
+
+void AudioProcessorGraph::sortConnections() const noexcept
+{
+    if (connectionsNeedSorting)
+    {
+        connectionsNeedSorting = false;
+        std::sort (connections.begin(), connections.end());
+    }
 }
 
 bool AudioProcessorGraph::removeConnection (const Connection& c)
