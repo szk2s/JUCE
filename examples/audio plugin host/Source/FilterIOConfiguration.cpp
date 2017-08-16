@@ -502,7 +502,7 @@ void FilterIOConfigurationWindow::update()
             graph->disconnectNode (nodeID);
 
     if (auto* graphEditor = getGraphEditor())
-        if (auto* panel = graphEditor->graphPanel)
+        if (auto* panel = graphEditor->graphPanel.get())
             panel->updateComponents();
 }
 

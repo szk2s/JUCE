@@ -28,10 +28,6 @@
 
 #include "FilterGraph.h"
 
-struct FilterComponent;
-struct ConnectorComponent;
-struct PinComponent;
-
 
 //==============================================================================
 /**
@@ -45,10 +41,6 @@ public:
     ~GraphEditorPanel();
 
     void createNewPlugin (const PluginDescription&, Point<int> position);
-
-    FilterComponent* getComponentForFilter (AudioProcessorGraph::NodeID) const;
-    ConnectorComponent* getComponentForConnection (const AudioProcessorGraph::Connection&) const;
-    PinComponent* findPinAt (Point<float>) const;
 
     void paint (Graphics&) override;
     void mouseDown (const MouseEvent&) override;
@@ -67,7 +59,17 @@ public:
     FilterGraph& graph;
 
 private:
+    struct FilterComponent;
+    struct ConnectorComponent;
+    struct PinComponent;
+
+    OwnedArray<FilterComponent> nodes;
+    OwnedArray<ConnectorComponent> connectors;
     ScopedPointer<ConnectorComponent> draggingConnector;
+
+    FilterComponent* getComponentForFilter (AudioProcessorGraph::NodeID) const;
+    ConnectorComponent* getComponentForConnection (const AudioProcessorGraph::Connection&) const;
+    PinComponent* findPinAt (Point<float>) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GraphEditorPanel)
 };
@@ -98,18 +100,17 @@ public:
     void unfocusKeyboardComponent();
     void releaseGraph();
 
+    ScopedPointer<GraphEditorPanel> graphPanel;
+    ScopedPointer<MidiKeyboardComponent> keyboardComp;
+
 private:
     //==============================================================================
     AudioDeviceManager& deviceManager;
     AudioProcessorPlayer graphPlayer;
     MidiKeyboardState keyState;
 
-public:
-    GraphEditorPanel* graphPanel;
-
-private:
-    Component* keyboardComp;
-    Component* statusBar;
+    struct TooltipBar;
+    ScopedPointer<TooltipBar> statusBar;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GraphDocumentComponent)
 };
