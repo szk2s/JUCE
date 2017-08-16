@@ -876,11 +876,22 @@ const String AudioProcessorGraph::getName() const
 }
 
 //==============================================================================
+void AudioProcessorGraph::topologyChanged()
+{
+    sendChangeMessage();
+
+    if (isPrepared)
+        triggerAsyncUpdate();
+}
+
 void AudioProcessorGraph::clear()
 {
+    if (nodes.isEmpty() && connections.empty())
+        return;
+
     nodes.clear();
     connections.clear();
-    triggerAsyncUpdate();
+    topologyChanged();
 }
 
 AudioProcessorGraph::Node* AudioProcessorGraph::getNodeForId (NodeID nodeID) const
@@ -919,11 +930,8 @@ AudioProcessorGraph::Node::Ptr AudioProcessorGraph::addNode (AudioProcessor* new
 
     Node::Ptr n (new Node (nodeID, newProcessor));
     nodes.add (n);
-
-    if (isPrepared)
-        triggerAsyncUpdate();
-
     n->setParentGraph (this);
+    topologyChanged();
     return n;
 }
 
@@ -935,10 +943,7 @@ bool AudioProcessorGraph::removeNode (NodeID nodeId)
         {
             disconnectNode (nodeId);
             nodes.remove (i);
-
-            if (isPrepared)
-                triggerAsyncUpdate();
-
+            topologyChanged();
             return true;
         }
     }
@@ -1024,10 +1029,7 @@ bool AudioProcessorGraph::addConnection (const Connection& c)
         connectionsNeedSorting = (c < connections.back());
 
     connections.push_back (c);
-
-    if (isPrepared)
-        triggerAsyncUpdate();
-
+    topologyChanged();
     return true;
 }
 
@@ -1047,10 +1049,7 @@ bool AudioProcessorGraph::removeConnection (const Connection& c)
     if (pos != connections.end())
     {
         connections.erase (pos);
-
-        if (isPrepared)
-            triggerAsyncUpdate();
-
+        topologyChanged();
         return true;
     }
 
@@ -1065,7 +1064,13 @@ bool AudioProcessorGraph::disconnectNode (NodeID nodeID)
                                       [nodeID] (const Connection& c) { return c.source.nodeID == nodeID || c.destination.nodeID == nodeID; }),
                        connections.end());
 
-    return oldSize != connections.size();
+    if (oldSize != connections.size())
+    {
+        topologyChanged();
+        return true;
+    }
+
+    return false;
 }
 
 bool AudioProcessorGraph::isConnectionLegal (const Connection& c) const

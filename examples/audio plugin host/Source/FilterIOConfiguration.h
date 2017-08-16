@@ -28,13 +28,14 @@
 
 #include "FilterGraph.h"
 
-class FilterIOConfigurationWindow       : public  AudioProcessorEditor
+
+class FilterIOConfigurationWindow   : public  AudioProcessorEditor
 {
 public:
     class InputOutputConfig;
 
     //==============================================================================
-    FilterIOConfigurationWindow (AudioProcessor* const p);
+    FilterIOConfigurationWindow (AudioProcessor&);
     ~FilterIOConfigurationWindow();
 
     //==============================================================================
@@ -44,20 +45,18 @@ public:
     //==============================================================================
     InputOutputConfig* getConfig (bool isInput) noexcept { return isInput ? inConfig : outConfig; }
     void update();
+
 private:
-
-    //==============================================================================
-    MainHostWindow* getMainWindow() const;
-    GraphDocumentComponent* getGraphEditor() const;
-    AudioProcessorGraph* getGraph() const;
-    int32 getNodeId() const;
-
-    //==============================================================================
     friend class InputOutputConfig;
 
     AudioProcessor::BusesLayout currentLayout;
     Label title;
     ScopedPointer<InputOutputConfig> inConfig, outConfig;
+
+    MainHostWindow* getMainWindow() const;
+    GraphDocumentComponent* getGraphEditor() const;
+    AudioProcessorGraph* getGraph() const;
+    AudioProcessorGraph::NodeID getNodeID() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FilterIOConfigurationWindow)
 };

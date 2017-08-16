@@ -29,14 +29,160 @@
 #include "FilterGraph.h"
 #include "InternalFilters.h"
 #include "GraphEditorPanel.h"
+#include "FilterIOConfiguration.h"
 
 
 //==============================================================================
-const int FilterGraph::midiChannelNumber = 0x1000;
+PluginWindow::PluginWindow (FilterGraph& g,
+                            AudioProcessorEditor* pluginEditor,
+                            AudioProcessorGraph::Node* o,
+                            Type t)
+    : DocumentWindow (pluginEditor->getName(),
+                      LookAndFeel::getDefaultLookAndFeel().findColour (ResizableWindow::backgroundColourId),
+                      DocumentWindow::minimiseButton | DocumentWindow::closeButton),
+      panel (g),
+      owner (o),
+      type (t)
+{
+    setSize (400, 300);
 
+    setContentOwned (pluginEditor, true);
+
+    setTopLeftPosition (owner->properties.getWithDefault (getLastXProp (type), Random::getSystemRandom().nextInt (500)),
+                        owner->properties.getWithDefault (getLastYProp (type), Random::getSystemRandom().nextInt (500)));
+
+    owner->properties.set (getOpenProp (type), true);
+
+    setVisible (true);
+}
+
+PluginWindow::~PluginWindow()
+{
+    clearContentComponent();
+}
+
+void PluginWindow::moved()
+{
+    owner->properties.set (getLastXProp (type), getX());
+    owner->properties.set (getLastYProp (type), getY());
+}
+
+void PluginWindow::closeButtonPressed()
+{
+    owner->properties.set (getOpenProp (type), false);
+    panel.closeCurrentlyOpenWindowsFor (owner->nodeId);
+}
+
+String PluginWindow::getTypeName (Type type)
+{
+    switch (type)
+    {
+        case Type::normal:     return "Normal";
+        case Type::generic:    return "Generic";
+        case Type::programs:   return "Programs";
+        case Type::parameters: return "Parameters";
+        case Type::audioIO:    return "IO";
+        default:               return {};
+    }
+}
+
+//==============================================================================
+struct ProgramAudioProcessorEditor  : public AudioProcessorEditor
+{
+    ProgramAudioProcessorEditor (AudioProcessor& p)  : AudioProcessorEditor (p)
+    {
+        setOpaque (true);
+
+        addAndMakeVisible (panel);
+
+        Array<PropertyComponent*> programs;
+
+        auto numPrograms = p.getNumPrograms();
+        int totalHeight = 0;
+
+        for (int i = 0; i < numPrograms; ++i)
+        {
+            auto name = p.getProgramName (i).trim();
+
+            if (name.isEmpty())
+                name = "Unnamed";
+
+            auto pc = new PropertyComp (name, p);
+            programs.add (pc);
+            totalHeight += pc->getPreferredHeight();
+        }
+
+        panel.addProperties (programs);
+
+        setSize (400, jlimit (25, 400, totalHeight));
+    }
+
+    void paint (Graphics& g) override
+    {
+        g.fillAll (Colours::grey);
+    }
+
+    void resized() override
+    {
+        panel.setBounds (getLocalBounds());
+    }
+
+private:
+    struct PropertyComp  : public PropertyComponent,
+                           private AudioProcessorListener
+    {
+        PropertyComp (const String& name, AudioProcessor& p)  : PropertyComponent (name), owner (p)
+        {
+            owner.addListener (this);
+        }
+
+        ~PropertyComp()
+        {
+            owner.removeListener (this);
+        }
+
+        void refresh() override {}
+        void audioProcessorChanged (AudioProcessor*) override {}
+        void audioProcessorParameterChanged (AudioProcessor*, int, float) override {}
+
+        AudioProcessor& owner;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PropertyComp)
+    };
+
+    PropertyPanel panel;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProgramAudioProcessorEditor)
+};
+
+AudioProcessorEditor* PluginWindow::createProcessorEditor (AudioProcessor& processor, PluginWindow::Type type)
+{
+    if (type == PluginWindow::Type::normal)
+    {
+        if (auto* ui = processor.createEditorIfNeeded())
+            return ui;
+
+        type = PluginWindow::Type::generic;
+    }
+
+    if (type == PluginWindow::Type::generic || type == PluginWindow::Type::parameters)
+        return new GenericAudioProcessorEditor (&processor);
+
+    if (type == PluginWindow::Type::programs)
+        return new ProgramAudioProcessorEditor (processor);
+
+    if (type == PluginWindow::Type::audioIO)
+        return new FilterIOConfigurationWindow (processor);
+
+    jassertfalse;
+    return {};
+}
+
+
+//==============================================================================
 FilterGraph::FilterGraph (AudioPluginFormatManager& fm)
-    : FileBasedDocument (filenameSuffix,
-                         filenameWildcard,
+    : FileBasedDocument (getFilenameSuffix(),
+                         getFilenameWildcard(),
                          "Load a filter graph",
                          "Save a filter graph"),
       formatManager (fm)
@@ -48,6 +194,7 @@ FilterGraph::FilterGraph (AudioPluginFormatManager& fm)
     addFilter (internalFormat.audioOutDesc, { 0.5,  0.9 });
 
     graph.addListener (this);
+    graph.addChangeListener (this);
 
     setChangedFlag (false);
 }
@@ -55,6 +202,7 @@ FilterGraph::FilterGraph (AudioPluginFormatManager& fm)
 FilterGraph::~FilterGraph()
 {
     graph.addListener (this);
+    graph.removeChangeListener (this);
     graph.clear();
 }
 
@@ -64,6 +212,11 @@ FilterGraph::NodeID FilterGraph::getNextUID() noexcept
 }
 
 //==============================================================================
+void FilterGraph::changeListenerCallback (ChangeBroadcaster*)
+{
+    changed();
+}
+
 int FilterGraph::getNumFilters() const noexcept
 {
     return graph.getNumNodes();
@@ -105,7 +258,9 @@ void FilterGraph::addFilter (const PluginDescription& desc, Point<double> p)
         Point<double> position;
     };
 
-    formatManager.createPluginInstanceAsync (desc, graph.getSampleRate(), graph.getBlockSize(),
+    formatManager.createPluginInstanceAsync (desc,
+                                             graph.getSampleRate(),
+                                             graph.getBlockSize(),
                                              new AsyncCallback (*this, p));
 }
 
@@ -132,22 +287,8 @@ void FilterGraph::addFilterCallback (AudioPluginInstance* instance, const String
 
 void FilterGraph::removeFilter (NodeID nodeID)
 {
-    PluginWindow::closeCurrentlyOpenWindowsFor (nodeID);
-
-    if (graph.removeNode (nodeID))
-        changed();
-}
-
-void FilterGraph::disconnectFilter (NodeID nodeID)
-{
-    if (graph.disconnectNode (nodeID))
-        changed();
-}
-
-void FilterGraph::removeIllegalConnections()
-{
-    if (graph.removeIllegalConnections())
-        changed();
+    closeCurrentlyOpenWindowsFor (nodeID);
+    graph.removeNode (nodeID);
 }
 
 void FilterGraph::setNodePosition (NodeID nodeID, Point<double> pos)
@@ -169,28 +310,56 @@ Point<double> FilterGraph::getNodePosition (NodeID nodeID) const
 }
 
 //==============================================================================
-bool FilterGraph::addConnection (const AudioProcessorGraph::Connection& c)
-{
-    bool result = graph.addConnection (c);
-
-    if (result)
-        changed();
-
-    return result;
-}
-
-void FilterGraph::removeConnection (const AudioProcessorGraph::Connection& c)
-{
-    if (graph.removeConnection (c))
-        changed();
-}
-
 void FilterGraph::clear()
 {
-    PluginWindow::closeAllCurrentlyOpenWindows();
-
+    closeAnyOpenPluginWindows();
     graph.clear();
     changed();
+}
+
+PluginWindow* FilterGraph::getOrCreateWindowFor (AudioProcessorGraph::Node* node, PluginWindow::Type type)
+{
+    jassert (node != nullptr);
+
+    for (auto* w : activePluginWindows)
+        if (w->owner == node && w->type == type)
+            return w;
+
+    if (auto* processor = node->getProcessor())
+    {
+        if (auto* plugin = dynamic_cast<AudioPluginInstance*> (processor))
+        {
+            auto description = plugin->getPluginDescription();
+
+            if (description.pluginFormatName == "Internal")
+            {
+                getCommandManager().invokeDirectly (CommandIDs::showAudioSettings, false);
+                return nullptr;
+            }
+        }
+
+        if (auto* ui = PluginWindow::createProcessorEditor (*processor, type))
+        {
+            ui->setName (processor->getName());
+            return activePluginWindows.add (new PluginWindow (*this, ui, node, type));
+        }
+    }
+
+    return nullptr;
+}
+
+void FilterGraph::closeCurrentlyOpenWindowsFor (const uint32 nodeId)
+{
+    for (int i = activePluginWindows.size(); --i >= 0;)
+        if (activePluginWindows.getUnchecked(i)->owner->nodeId == nodeId)
+            activePluginWindows.remove (i);
+}
+
+bool FilterGraph::closeAnyOpenPluginWindows()
+{
+    bool wasEmpty = activePluginWindows.isEmpty();
+    activePluginWindows.clear();
+    return ! wasEmpty;
 }
 
 //==============================================================================
@@ -232,7 +401,7 @@ Result FilterGraph::saveDocument (const File& file)
 {
     ScopedPointer<XmlElement> xml (createXml());
 
-    if (! xml->writeToFile (file, String()))
+    if (! xml->writeToFile (file, {}))
         return Result::fail ("Couldn't write to the file");
 
     return Result::ok();
@@ -260,9 +429,11 @@ void FilterGraph::setLastDocumentOpened (const File& file)
 }
 
 //==============================================================================
-static void readBusLayoutFromXml (AudioProcessor::BusesLayout& busesLayout, AudioProcessor* plugin, const XmlElement& xml, const bool isInput)
+static void readBusLayoutFromXml (AudioProcessor::BusesLayout& busesLayout, AudioProcessor* plugin,
+                                  const XmlElement& xml, const bool isInput)
 {
-    Array<AudioChannelSet>& targetBuses = (isInput ? busesLayout.inputBuses : busesLayout.outputBuses);
+    auto& targetBuses = (isInput ? busesLayout.inputBuses
+                                 : busesLayout.outputBuses);
     int maxNumBuses = 0;
 
     if (auto* buses = xml.getChildByName (isInput ? "INPUTS" : "OUTPUTS"))
@@ -275,12 +446,13 @@ static void readBusLayoutFromXml (AudioProcessor::BusesLayout& busesLayout, Audi
             // the number of buses on busesLayout may not be in sync with the plugin after adding buses
             // because adding an input bus could also add an output bus
             for (int actualIdx = plugin->getBusCount (isInput) - 1; actualIdx < busIdx; ++actualIdx)
-                if (! plugin->addBus (isInput)) return;
+                if (! plugin->addBus (isInput))
+                    return;
 
             for (int actualIdx = targetBuses.size() - 1; actualIdx < busIdx; ++actualIdx)
                 targetBuses.add (plugin->getChannelLayoutOfBus (isInput, busIdx));
 
-            const String& layout = e->getStringAttribute("layout");
+            auto layout = e->getStringAttribute ("layout");
 
             if (layout.isNotEmpty())
                 targetBuses.getReference (busIdx) = AudioChannelSet::fromAbbreviatedString (layout);
@@ -326,15 +498,15 @@ static XmlElement* createNodeXml (AudioProcessorGraph::Node* const node) noexcep
         e->setAttribute ("x", node->properties ["x"].toString());
         e->setAttribute ("y", node->properties ["y"].toString());
 
-        for (int i = 0; i < PluginWindow::NumTypes; ++i)
+        for (int i = 0; i < (int) PluginWindow::Type::numTypes; ++i)
         {
-            auto type = (PluginWindow::WindowFormatType) i;
+            auto type = (PluginWindow::Type) i;
 
-            if (node->properties.contains (getOpenProp (type)))
+            if (node->properties.contains (PluginWindow::getOpenProp (type)))
             {
-                e->setAttribute (getLastXProp (type), node->properties[getLastXProp (type)].toString());
-                e->setAttribute (getLastYProp (type), node->properties[getLastYProp (type)].toString());
-                e->setAttribute (getOpenProp (type),  node->properties[getOpenProp (type)].toString());
+                e->setAttribute (PluginWindow::getLastXProp (type), node->properties[PluginWindow::getLastXProp (type)].toString());
+                e->setAttribute (PluginWindow::getLastYProp (type), node->properties[PluginWindow::getLastYProp (type)].toString());
+                e->setAttribute (PluginWindow::getOpenProp (type),  node->properties[PluginWindow::getOpenProp (type)].toString());
             }
         }
 
@@ -350,12 +522,11 @@ static XmlElement* createNodeXml (AudioProcessorGraph::Node* const node) noexcep
             e->createNewChildElement ("STATE")->addTextElement (m.toBase64Encoding());
         }
 
-        auto layouts = e->createNewChildElement ("LAYOUT");
         auto layout = plugin->getBusesLayout();
-        const bool isInputChoices[] = { true, false };
 
-        for (bool isInput : isInputChoices)
-            layouts->addChildElement (createBusLayoutXml (layout, isInput));
+        auto layouts = e->createNewChildElement ("LAYOUT");
+        layouts->addChildElement (createBusLayoutXml (layout, true));
+        layouts->addChildElement (createBusLayoutXml (layout, false));
 
         return e;
     }
@@ -369,8 +540,10 @@ void FilterGraph::createNodeFromXml (const XmlElement& xml)
     PluginDescription pd;
 
     forEachXmlChildElement (xml, e)
+    {
         if (pd.loadFromXml (*e))
             break;
+    }
 
     String errorMessage;
 
@@ -379,11 +552,10 @@ void FilterGraph::createNodeFromXml (const XmlElement& xml)
     {
         if (auto* layoutEntity = xml.getChildByName ("LAYOUT"))
         {
-            AudioProcessor::BusesLayout layout = instance->getBusesLayout();
+            auto layout = instance->getBusesLayout();
 
-            const bool isInputChoices[] = { true, false };
-            for (bool isInput : isInputChoices)
-                readBusLayoutFromXml (layout, instance, *layoutEntity, isInput);
+            readBusLayoutFromXml (layout, instance, *layoutEntity, true);
+            readBusLayoutFromXml (layout, instance, *layoutEntity, false);
 
             instance->setBusesLayout (layout);
         }
@@ -401,21 +573,21 @@ void FilterGraph::createNodeFromXml (const XmlElement& xml)
             node->properties.set ("x", xml.getDoubleAttribute ("x"));
             node->properties.set ("y", xml.getDoubleAttribute ("y"));
 
-            for (int i = 0; i < PluginWindow::NumTypes; ++i)
+            for (int i = 0; i < (int) PluginWindow::Type::numTypes; ++i)
             {
-                auto type = (PluginWindow::WindowFormatType) i;
+                auto type = (PluginWindow::Type) i;
 
-                if (xml.hasAttribute (getOpenProp (type)))
+                if (xml.hasAttribute (PluginWindow::getOpenProp (type)))
                 {
-                    node->properties.set (getLastXProp (type), xml.getIntAttribute (getLastXProp (type)));
-                    node->properties.set (getLastYProp (type), xml.getIntAttribute (getLastYProp (type)));
-                    node->properties.set (getOpenProp (type), xml.getIntAttribute (getOpenProp (type)));
+                    node->properties.set (PluginWindow::getLastXProp (type), xml.getIntAttribute (PluginWindow::getLastXProp (type)));
+                    node->properties.set (PluginWindow::getLastYProp (type), xml.getIntAttribute (PluginWindow::getLastYProp (type)));
+                    node->properties.set (PluginWindow::getOpenProp  (type), xml.getIntAttribute (PluginWindow::getOpenProp (type)));
 
-                    if (node->properties[getOpenProp (type)])
+                    if (node->properties[PluginWindow::getOpenProp (type)])
                     {
                         jassert (node->getProcessor() != nullptr);
 
-                        if (PluginWindow* const w = PluginWindow::getWindowFor (node, type))
+                        if (auto w = getOrCreateWindowFor (node, type))
                             w->toFront (true);
                     }
                 }
@@ -426,10 +598,10 @@ void FilterGraph::createNodeFromXml (const XmlElement& xml)
 
 XmlElement* FilterGraph::createXml() const
 {
-    XmlElement* xml = new XmlElement ("FILTERGRAPH");
+    auto* xml = new XmlElement ("FILTERGRAPH");
 
-    for (int i = 0; i < graph.getNumNodes(); ++i)
-        xml->addChildElement (createNodeXml (graph.getNode (i)));
+    for (auto* node : graph.getNodes())
+        xml->addChildElement (createNodeXml (node));
 
     for (auto& connection : graph.getConnections())
     {
@@ -456,8 +628,8 @@ void FilterGraph::restoreFromXml (const XmlElement& xml)
 
     forEachXmlChildElementWithTagName (xml, e, "CONNECTION")
     {
-        addConnection ({ { (NodeID) e->getIntAttribute ("srcFilter"), e->getIntAttribute ("srcChannel") },
-                         { (NodeID) e->getIntAttribute ("dstFilter"), e->getIntAttribute ("dstChannel") } });
+        graph.addConnection ({ { (NodeID) e->getIntAttribute ("srcFilter"), e->getIntAttribute ("srcChannel") },
+                               { (NodeID) e->getIntAttribute ("dstFilter"), e->getIntAttribute ("dstChannel") } });
     }
 
     graph.removeIllegalConnections();

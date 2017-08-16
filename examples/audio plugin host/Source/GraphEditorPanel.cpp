@@ -28,203 +28,20 @@
 #include "GraphEditorPanel.h"
 #include "InternalFilters.h"
 #include "MainHostWindow.h"
-#include "FilterIOConfiguration.h"
 
-
-//==============================================================================
-static Array<PluginWindow*> activePluginWindows;
-
-PluginWindow::PluginWindow (AudioProcessorEditor* pluginEditor, AudioProcessorGraph::Node* o, WindowFormatType t)
-    : DocumentWindow (pluginEditor->getName(),
-                      LookAndFeel::getDefaultLookAndFeel().findColour (ResizableWindow::backgroundColourId),
-                      DocumentWindow::minimiseButton | DocumentWindow::closeButton),
-      owner (o),
-      type (t)
-{
-    setSize (400, 300);
-
-    setContentOwned (pluginEditor, true);
-
-    setTopLeftPosition (owner->properties.getWithDefault (getLastXProp (type), Random::getSystemRandom().nextInt (500)),
-                        owner->properties.getWithDefault (getLastYProp (type), Random::getSystemRandom().nextInt (500)));
-
-    owner->properties.set (getOpenProp (type), true);
-
-    setVisible (true);
-
-    activePluginWindows.add (this);
-}
-
-void PluginWindow::closeCurrentlyOpenWindowsFor (const uint32 nodeId)
-{
-    for (int i = activePluginWindows.size(); --i >= 0;)
-        if (activePluginWindows.getUnchecked(i)->owner->nodeId == nodeId)
-            delete activePluginWindows.getUnchecked (i);
-}
-
-void PluginWindow::closeAllCurrentlyOpenWindows()
-{
-    if (activePluginWindows.size() > 0)
-    {
-        for (int i = activePluginWindows.size(); --i >= 0;)
-            delete activePluginWindows.getUnchecked (i);
-
-        Component dummyModalComp;
-        dummyModalComp.enterModalState (false);
-        MessageManager::getInstance()->runDispatchLoopUntil (50);
-    }
-}
-
-//==============================================================================
-struct ProcessorProgramPropertyComp  : public PropertyComponent,
-                                       private AudioProcessorListener
-{
-    ProcessorProgramPropertyComp (const String& name, AudioProcessor& p)
-        : PropertyComponent (name), owner (p)
-    {
-        owner.addListener (this);
-    }
-
-    ~ProcessorProgramPropertyComp()
-    {
-        owner.removeListener (this);
-    }
-
-    void refresh() override {}
-    void audioProcessorChanged (AudioProcessor*) override {}
-    void audioProcessorParameterChanged (AudioProcessor*, int, float) override {}
-
-    AudioProcessor& owner;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProcessorProgramPropertyComp)
-};
-
-struct ProgramAudioProcessorEditor  : public AudioProcessorEditor
-{
-    ProgramAudioProcessorEditor (AudioProcessor* p)  : AudioProcessorEditor (p)
-    {
-        jassert (p != nullptr);
-        setOpaque (true);
-
-        addAndMakeVisible (panel);
-
-        Array<PropertyComponent*> programs;
-
-        auto numPrograms = p->getNumPrograms();
-        int totalHeight = 0;
-
-        for (int i = 0; i < numPrograms; ++i)
-        {
-            auto name = p->getProgramName (i).trim();
-
-            if (name.isEmpty())
-                name = "Unnamed";
-
-            auto pc = new ProcessorProgramPropertyComp (name, *p);
-            programs.add (pc);
-            totalHeight += pc->getPreferredHeight();
-        }
-
-        panel.addProperties (programs);
-
-        setSize (400, jlimit (25, 400, totalHeight));
-    }
-
-    void paint (Graphics& g) override
-    {
-        g.fillAll (Colours::grey);
-    }
-
-    void resized() override
-    {
-        panel.setBounds (getLocalBounds());
-    }
-
-    PropertyPanel panel;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProgramAudioProcessorEditor)
-};
-
-//==============================================================================
-PluginWindow* PluginWindow::getWindowFor (AudioProcessorGraph::Node* node, WindowFormatType type)
-{
-    jassert (node != nullptr);
-
-    for (auto* w : activePluginWindows)
-        if (w->owner == node && w->type == type)
-            return w;
-
-    auto* processor = node->getProcessor();
-    AudioProcessorEditor* ui = nullptr;
-
-    if (auto* pluginInstance = dynamic_cast<AudioPluginInstance*> (processor))
-    {
-        auto description = pluginInstance->getPluginDescription();
-
-        if (description.pluginFormatName == "Internal")
-        {
-            getCommandManager().invokeDirectly (CommandIDs::showAudioSettings, false);
-
-            return nullptr;
-        }
-    }
-
-    if (type == Normal)
-    {
-        ui = processor->createEditorIfNeeded();
-
-        if (ui == nullptr)
-            type = Generic;
-    }
-
-    if (ui == nullptr)
-    {
-        if (type == Generic || type == Parameters)  ui = new GenericAudioProcessorEditor (processor);
-        else if (type == Programs)                  ui = new ProgramAudioProcessorEditor (processor);
-        else if (type == AudioIO)                   ui = new FilterIOConfigurationWindow (processor);
-    }
-
-    if (ui != nullptr)
-    {
-        if (auto* plugin = dynamic_cast<AudioPluginInstance*> (processor))
-            ui->setName (plugin->getName());
-
-        return new PluginWindow (ui, node, type);
-    }
-
-    return nullptr;
-}
-
-PluginWindow::~PluginWindow()
-{
-    activePluginWindows.removeFirstMatchingValue (this);
-    clearContentComponent();
-}
-
-void PluginWindow::moved()
-{
-    owner->properties.set (getLastXProp (type), getX());
-    owner->properties.set (getLastYProp (type), getY());
-}
-
-void PluginWindow::closeButtonPressed()
-{
-    owner->properties.set (getOpenProp (type), false);
-    delete this;
-}
 
 //==============================================================================
 struct PinComponent   : public Component,
                         public SettableTooltipClient
 {
-    PinComponent (FilterGraph& g, AudioProcessorGraph::NodeAndChannel pinToUse, bool isIn)
-        : graph (g), pin (pinToUse), isInput (isIn)
+    PinComponent (GraphEditorPanel& p, AudioProcessorGraph::NodeAndChannel pinToUse, bool isIn)
+        : panel (p), graph (p.graph), pin (pinToUse), isInput (isIn)
     {
         if (auto node = graph.getNodeForId (pin.nodeID))
         {
             String tip;
 
-            if (pin.channelIndex == FilterGraph::midiChannelNumber)
+            if (pin.isMIDI())
             {
                 tip = isInput ? "MIDI Input"
                               : "MIDI Output";
@@ -250,14 +67,14 @@ struct PinComponent   : public Component,
 
     void paint (Graphics& g) override
     {
-        const float w = (float) getWidth();
-        const float h = (float) getHeight();
+        auto w = (float) getWidth();
+        auto h = (float) getHeight();
 
         Path p;
         p.addEllipse (w * 0.25f, h * 0.25f, w * 0.5f, h * 0.5f);
         p.addRectangle (w * 0.4f, isInput ? (0.5f * h) : 0.0f, w * 0.2f, h * 0.5f);
 
-        auto colour = (pin.channelIndex == FilterGraph::midiChannelNumber ? Colours::red : Colours::green);
+        auto colour = (pin.isMIDI() ? Colours::red : Colours::green);
 
         g.setColour (colour.withRotatedHue (static_cast<float> (busIdx) / 5.0f));
         g.fillPath (p);
@@ -267,26 +84,22 @@ struct PinComponent   : public Component,
     {
         AudioProcessorGraph::NodeAndChannel dummy { 0, 0 };
 
-        getGraphPanel()->beginConnectorDrag (isInput ? dummy : pin,
-                                             isInput ? pin : dummy,
-                                             e);
+        panel.beginConnectorDrag (isInput ? dummy : pin,
+                                  isInput ? pin : dummy,
+                                  e);
     }
 
     void mouseDrag (const MouseEvent& e) override
     {
-        getGraphPanel()->dragConnector (e);
+        panel.dragConnector (e);
     }
 
     void mouseUp (const MouseEvent& e) override
     {
-        getGraphPanel()->endDraggingConnector (e);
+        panel.endDraggingConnector (e);
     }
 
-    GraphEditorPanel* getGraphPanel() const noexcept
-    {
-        return findParentComponentOfClass<GraphEditorPanel>();
-    }
-
+    GraphEditorPanel& panel;
     FilterGraph& graph;
     AudioProcessorGraph::NodeAndChannel pin;
     const bool isInput;
@@ -298,7 +111,7 @@ struct PinComponent   : public Component,
 //==============================================================================
 struct FilterComponent   : public Component
 {
-    FilterComponent (FilterGraph& g, uint32 id)  : graph (g), pluginID (id)
+    FilterComponent (GraphEditorPanel& p, uint32 id)  : panel (p), graph (p.graph), pluginID (id)
     {
         shadow.setShadowProperties (DropShadow (Colours::black.withAlpha (0.5f), 3, { 0, 1 }));
         setComponentEffect (&shadow);
@@ -343,7 +156,7 @@ struct FilterComponent   : public Component
 
             if (r == 2)
             {
-                graph.disconnectFilter (pluginID);
+                graph.graph.disconnectNode (pluginID);
             }
             else
             {
@@ -360,19 +173,19 @@ struct FilterComponent   : public Component
                     }
                     else
                     {
-                        PluginWindow::WindowFormatType type = processor->hasEditor() ? PluginWindow::Normal
-                                                                                     : PluginWindow::Generic;
+                        auto type = processor->hasEditor() ? PluginWindow::Type::normal
+                                                           : PluginWindow::Type::generic;
 
                         switch (r)
                         {
-                            case 4: type = PluginWindow::Programs; break;
-                            case 5: type = PluginWindow::Parameters; break;
-                            case 6: type = PluginWindow::AudioIO; break;
+                            case 4: type = PluginWindow::Type::programs; break;
+                            case 5: type = PluginWindow::Type::parameters; break;
+                            case 6: type = PluginWindow::Type::audioIO; break;
 
                             default: break;
                         }
 
-                        if (auto* w = PluginWindow::getWindowFor (node, type))
+                        if (auto* w = graph.getOrCreateWindowFor (node, type))
                             w->toFront (true);
                     }
                 }
@@ -395,7 +208,7 @@ struct FilterComponent   : public Component
                                    { pos.x / (double) getParentWidth(),
                                      pos.y / (double) getParentHeight() });
 
-            getGraphPanel()->updateComponents();
+            panel.updateComponents();
         }
     }
 
@@ -408,7 +221,7 @@ struct FilterComponent   : public Component
         else if (e.getNumberOfClicks() == 2)
         {
             if (auto f = graph.getNodeForId (pluginID))
-                if (auto* w = PluginWindow::getWindowFor (f, PluginWindow::Normal))
+                if (auto* w = graph.getOrCreateWindowFor (f, PluginWindow::Type::normal))
                     w->toFront (true);
         }
     }
@@ -424,18 +237,14 @@ struct FilterComponent   : public Component
 
     void paint (Graphics& g) override
     {
+        auto boxArea = getLocalBounds().reduced (4, pinSize);
+
         g.setColour (findColour (TextEditor::backgroundColourId));
-
-        const int x = 4;
-        const int y = pinSize;
-        const int w = getWidth() - x * 2;
-        const int h = getHeight() - pinSize * 2;
-
-        g.fillRect (x, y, w, h);
+        g.fillRect (boxArea.toFloat());
 
         g.setColour (findColour (TextEditor::textColourId));
         g.setFont (font);
-        g.drawFittedText (getName(), getLocalBounds().reduced (4, 2), Justification::centred, 2);
+        g.drawFittedText (getName(), boxArea, Justification::centred, 2);
     }
 
     void resized() override
@@ -454,7 +263,7 @@ struct FilterComponent   : public Component
                         processor->getOffsetInBusBufferForAbsoluteChannelIndex (isInput, channelIndex, busIdx);
 
                         const int total = isInput ? numIns : numOuts;
-                        const int index = channelIndex == FilterGraph::midiChannelNumber ? (total - 1) : channelIndex;
+                        const int index = pin->pin.isMIDI() ? (total - 1) : channelIndex;
 
                         auto totalSpaces = static_cast<float> (total) + (static_cast<float> (jmax (0, processor->getBusCount (isInput) - 1)) * 0.5f);
                         auto indexPos = static_cast<float> (index) + (static_cast<float> (busIdx) * 0.5f);
@@ -511,7 +320,7 @@ struct FilterComponent   : public Component
         setName (f->getProcessor()->getName());
 
         {
-            Point<double> p = graph.getNodePosition (pluginID);
+            auto p = graph.getNodePosition (pluginID);
             setCentreRelative ((float) p.x, (float) p.y);
         }
 
@@ -523,26 +332,22 @@ struct FilterComponent   : public Component
             deleteAllChildren();
 
             for (int i = 0; i < f->getProcessor()->getTotalNumInputChannels(); ++i)
-                addAndMakeVisible (new PinComponent (graph, { pluginID, i }, true));
+                addAndMakeVisible (new PinComponent (panel, { pluginID, i }, true));
 
             if (f->getProcessor()->acceptsMidi())
-                addAndMakeVisible (new PinComponent (graph, { pluginID, FilterGraph::midiChannelNumber }, true));
+                addAndMakeVisible (new PinComponent (panel, { pluginID, AudioProcessorGraph::midiChannelIndex }, true));
 
             for (int i = 0; i < f->getProcessor()->getTotalNumOutputChannels(); ++i)
-                addAndMakeVisible (new PinComponent (graph, { pluginID, i }, false));
+                addAndMakeVisible (new PinComponent (panel, { pluginID, i }, false));
 
             if (f->getProcessor()->producesMidi())
-                addAndMakeVisible (new PinComponent (graph, { pluginID, FilterGraph::midiChannelNumber }, false));
+                addAndMakeVisible (new PinComponent (panel, { pluginID, AudioProcessorGraph::midiChannelIndex }, false));
 
             resized();
         }
     }
 
-    GraphEditorPanel* getGraphPanel() const noexcept
-    {
-        return findParentComponentOfClass<GraphEditorPanel>();
-    }
-
+    GraphEditorPanel& panel;
     FilterGraph& graph;
     const uint32 pluginID;
     int numInputs = 0, numOutputs = 0;
@@ -558,7 +363,7 @@ struct FilterComponent   : public Component
 struct ConnectorComponent   : public Component,
                               public SettableTooltipClient
 {
-    ConnectorComponent (FilterGraph& g) : graph (g)
+    ConnectorComponent (GraphEditorPanel& p) : panel (p), graph (p.graph)
     {
         setAlwaysOnTop (true);
     }
@@ -622,27 +427,19 @@ struct ConnectorComponent   : public Component,
         p1 = lastInputPos;
         p2 = lastOutputPos;
 
-        if (auto* hostPanel = getGraphPanel())
-        {
-            if (auto* src = hostPanel->getComponentForFilter (connection.source.nodeID))
-                p1 = src->getPinPos (connection.source.channelIndex, false);
+        if (auto* src = panel.getComponentForFilter (connection.source.nodeID))
+            p1 = src->getPinPos (connection.source.channelIndex, false);
 
-            if (auto* dest = hostPanel->getComponentForFilter (connection.destination.nodeID))
-                p2 = dest->getPinPos (connection.destination.channelIndex, true);
-        }
+        if (auto* dest = panel.getComponentForFilter (connection.destination.nodeID))
+            p2 = dest->getPinPos (connection.destination.channelIndex, true);
     }
 
     void paint (Graphics& g) override
     {
-        if (connection.source.channelIndex == FilterGraph::midiChannelNumber
-             || connection.destination.channelIndex == FilterGraph::midiChannelNumber)
-        {
+        if (connection.source.isMIDI() || connection.destination.isMIDI())
             g.setColour (Colours::red);
-        }
         else
-        {
             g.setColour (Colours::green);
-        }
 
         g.fillPath (linePath);
     }
@@ -672,13 +469,13 @@ struct ConnectorComponent   : public Component,
     {
         if (dragging)
         {
-            getGraphPanel()->dragConnector (e);
+            panel.dragConnector (e);
         }
         else if (e.mouseWasDraggedSinceMouseDown())
         {
             dragging = true;
 
-            graph.removeConnection (connection);
+            graph.graph.removeConnection (connection);
 
             double distanceFromStart, distanceFromEnd;
             getDistancesFromEnds (getPosition().toFloat() + e.position, distanceFromStart, distanceFromEnd);
@@ -686,16 +483,16 @@ struct ConnectorComponent   : public Component,
 
             AudioProcessorGraph::NodeAndChannel dummy { 0, 0 };
 
-            getGraphPanel()->beginConnectorDrag (isNearerSource ? dummy : connection.source,
-                                                 isNearerSource ? connection.destination : dummy,
-                                                 e);
+            panel.beginConnectorDrag (isNearerSource ? dummy : connection.source,
+                                      isNearerSource ? connection.destination : dummy,
+                                      e);
         }
     }
 
     void mouseUp (const MouseEvent& e) override
     {
         if (dragging)
-            getGraphPanel()->endDraggingConnector (e);
+            panel.endDraggingConnector (e);
     }
 
     void resized() override
@@ -737,11 +534,6 @@ struct ConnectorComponent   : public Component,
         linePath.setUsingNonZeroWinding (true);
     }
 
-    GraphEditorPanel* getGraphPanel() const noexcept
-    {
-        return findParentComponentOfClass<GraphEditorPanel>();
-    }
-
     void getDistancesFromEnds (Point<float> p, double& distanceFromStart, double& distanceFromEnd) const
     {
         Point<float> p1, p2;
@@ -751,6 +543,7 @@ struct ConnectorComponent   : public Component,
         distanceFromEnd   = p2.getDistanceFrom (p);
     }
 
+    GraphEditorPanel& panel;
     FilterGraph& graph;
     AudioProcessorGraph::Connection connection { { 0, 0 }, { 0, 0 } };
     Point<float> lastInputPos, lastOutputPos;
@@ -845,8 +638,7 @@ void GraphEditorPanel::changeListenerCallback (ChangeBroadcaster*)
 
 void GraphEditorPanel::updateComponents()
 {
-    auto children = getChildren();
-    for (auto child : children)
+    for (auto* child : getChildren())
         if (auto* fc = dynamic_cast<FilterComponent*> (static_cast<Component*> (child)))
             fc->update();
 
@@ -856,28 +648,28 @@ void GraphEditorPanel::updateComponents()
 
         if (cc != nullptr && cc != draggingConnector)
         {
-            if (! graph.getGraph().isConnected (cc->connection))
+            if (! graph.graph.isConnected (cc->connection))
                 delete cc;
             else
                 cc->update();
         }
     }
 
-    for (auto* f : graph.getGraph().getNodes())
+    for (auto* f : graph.graph.getNodes())
     {
         if (getComponentForFilter (f->nodeId) == 0)
         {
-            auto* comp = new FilterComponent (graph, f->nodeId);
+            auto* comp = new FilterComponent (*this, f->nodeId);
             addAndMakeVisible (comp);
             comp->update();
         }
     }
 
-    for (auto& c : graph.getConnections())
+    for (auto& c : graph.graph.getConnections())
     {
         if (getComponentForConnection (c) == 0)
         {
-            auto* comp = new ConnectorComponent (graph);
+            auto* comp = new ConnectorComponent (*this);
             addAndMakeVisible (comp);
 
             comp->setInput (c.source);
@@ -893,7 +685,7 @@ void GraphEditorPanel::beginConnectorDrag (AudioProcessorGraph::NodeAndChannel s
     draggingConnector = dynamic_cast<ConnectorComponent*> (e.originalComponent);
 
     if (draggingConnector == nullptr)
-        draggingConnector = new ConnectorComponent (graph);
+        draggingConnector = new ConnectorComponent (*this);
 
     draggingConnector->setInput (source);
     draggingConnector->setOutput (dest);
@@ -927,7 +719,7 @@ void GraphEditorPanel::dragConnector (const MouseEvent& e)
                 connection.destination = pin->pin;
             }
 
-            if (graph.getGraph().canConnect (connection))
+            if (graph.graph.canConnect (connection))
             {
                 pos = (pin->getParentComponent()->getPosition() + pin->getBounds().getCentre()).toFloat();
                 draggingConnector->setTooltip (pin->getTooltip());
@@ -970,10 +762,9 @@ void GraphEditorPanel::endDraggingConnector (const MouseEvent& e)
             connection.destination = pin->pin;
         }
 
-        graph.addConnection (connection);
+        graph.graph.addConnection (connection);
     }
 }
-
 
 //==============================================================================
 struct TooltipBar   : public Component,
@@ -1021,7 +812,7 @@ GraphDocumentComponent::GraphDocumentComponent (AudioPluginFormatManager& fm, Au
 
     deviceManager.addChangeListener (graphPanel);
 
-    graphPlayer.setProcessor (&graph->getGraph());
+    graphPlayer.setProcessor (&graph->graph);
 
     keyState.addListener (&graphPlayer.getMidiMessageCollector());
 
@@ -1078,4 +869,9 @@ void GraphDocumentComponent::releaseGraph()
 void GraphDocumentComponent::setDoublePrecision (bool doublePrecision)
 {
     graphPlayer.setDoublePrecisionProcessing (doublePrecision);
+}
+
+bool GraphDocumentComponent::closeAnyOpenPluginWindows()
+{
+    return graphPanel->graph.closeAnyOpenPluginWindows();
 }

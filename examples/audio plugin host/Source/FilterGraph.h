@@ -26,18 +26,53 @@
 
 #pragma once
 
-class FilterInGraph;
 class FilterGraph;
 
-const char* const filenameSuffix = ".filtergraph";
-const char* const filenameWildcard = "*.filtergraph";
+//==============================================================================
+/** A desktop window containing a plugin's GUI. */
+class PluginWindow  : public DocumentWindow
+{
+public:
+    enum class Type
+    {
+        normal = 0,
+        generic,
+        programs,
+        parameters,
+        audioIO,
+        numTypes
+    };
+
+    PluginWindow (FilterGraph&, AudioProcessorEditor*, AudioProcessorGraph::Node*, Type);
+    ~PluginWindow();
+
+    void moved() override;
+    void closeButtonPressed() override;
+
+    static AudioProcessorEditor* createProcessorEditor (AudioProcessor&, PluginWindow::Type);
+
+    static String getTypeName (Type);
+    static String getLastXProp (Type type)    { return "uiLastX_" + getTypeName (type); }
+    static String getLastYProp (Type type)    { return "uiLastY_" + getTypeName (type); }
+    static String getOpenProp  (Type type)    { return "uiopen_"  + getTypeName (type); }
+
+    FilterGraph& panel;
+    AudioProcessorGraph::Node* const owner;
+    const Type type;
+
+private:
+    float getDesktopScaleFactor() const override     { return 1.0f; }
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginWindow)
+};
 
 //==============================================================================
 /**
     A collection of filters and some connections between them.
 */
 class FilterGraph   : public FileBasedDocument,
-                      public AudioProcessorListener
+                      public AudioProcessorListener,
+                      private ChangeListener
 {
 public:
     //==============================================================================
@@ -46,8 +81,6 @@ public:
 
     //==============================================================================
     typedef AudioProcessorGraph::NodeID NodeID;
-
-    AudioProcessorGraph& getGraph() noexcept         { return graph; }
 
     int getNumFilters() const noexcept;
     AudioProcessorGraph::Node::Ptr getNode (int index) const noexcept;
@@ -58,20 +91,16 @@ public:
     void addFilter (const PluginDescription&, Point<double>);
 
     void removeFilter (NodeID);
-    void disconnectFilter (NodeID);
-
-    void removeIllegalConnections();
-
+    
     void setNodePosition (NodeID, Point<double>);
     Point<double> getNodePosition (NodeID) const;
 
     //==============================================================================
-    const std::vector<AudioProcessorGraph::Connection> getConnections() const noexcept      { return graph.getConnections(); }
-
-    bool addConnection (const AudioProcessorGraph::Connection&);
-    void removeConnection (const AudioProcessorGraph::Connection&);
-
     void clear();
+
+    PluginWindow* getOrCreateWindowFor (AudioProcessorGraph::Node*, PluginWindow::Type);
+    void closeCurrentlyOpenWindowsFor (AudioProcessorGraph::NodeID);
+    bool closeAnyOpenPluginWindows();
 
     //==============================================================================
     void audioProcessorParameterChanged (AudioProcessor*, int, float) override {}
@@ -80,6 +109,9 @@ public:
     //==============================================================================
     XmlElement* createXml() const;
     void restoreFromXml (const XmlElement& xml);
+
+    static const char* getFilenameSuffix()      { return ".filtergraph"; }
+    static const char* getFilenameWildcard()    { return "*.filtergraph"; }
 
     //==============================================================================
     void newDocument();
@@ -90,22 +122,19 @@ public:
     void setLastDocumentOpened (const File& file) override;
 
     //==============================================================================
-
-
-    /** The special channel index used to refer to a filter's midi channel.
-    */
-    static const int midiChannelNumber;
+    AudioProcessorGraph graph;
 
 private:
     //==============================================================================
     AudioPluginFormatManager& formatManager;
-    AudioProcessorGraph graph;
+    OwnedArray<PluginWindow> activePluginWindows;
 
     NodeID lastUID = 0;
     NodeID getNextUID() noexcept;
 
     void createNodeFromXml (const XmlElement& xml);
     void addFilterCallback (AudioPluginInstance*, const String& error, Point<double>);
+    void changeListenerCallback (ChangeBroadcaster*) override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FilterGraph)
 };

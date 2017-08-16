@@ -41,6 +41,7 @@
     AudioProcessorPlayer object.
 */
 class JUCE_API  AudioProcessorGraph   : public AudioProcessor,
+                                        public ChangeBroadcaster,
                                         private AsyncUpdater
 {
 public:
@@ -367,6 +368,7 @@ private:
     bool isPrepared = false;
 
     void sortConnections() const noexcept;
+    void topologyChanged();
     void handleAsyncUpdate() override;
     void clearRenderingSequence();
     void buildRenderingSequence();
