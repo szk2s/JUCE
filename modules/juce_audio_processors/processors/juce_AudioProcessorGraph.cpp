@@ -24,10 +24,7 @@
   ==============================================================================
 */
 
-const int AudioProcessorGraph::midiChannelIndex = 0x1000;
 
-
-//==============================================================================
 template <typename FloatType>
 struct GraphRenderSequence
 {
@@ -332,14 +329,6 @@ struct RenderSequenceBuilder
     //==============================================================================
     typedef AudioProcessorGraph::NodeID NodeID;
 
-    struct NodeAndChannel
-    {
-        NodeID nodeID;
-        int channelIndex;
-
-        bool operator== (const NodeAndChannel& other) const noexcept    { return nodeID == other.nodeID && channelIndex == other.channelIndex; }
-    };
-
     AudioProcessorGraph& graph;
     RenderSequence& sequence;
 
@@ -347,7 +336,7 @@ struct RenderSequenceBuilder
 
     struct AssignedBuffer
     {
-        NodeAndChannel channel;
+        AudioProcessorGraph::NodeAndChannel channel;
 
         static AssignedBuffer createReadOnlyEmpty() noexcept    { return { { (NodeID) zeroNodeID, 0 } }; }
         static AssignedBuffer createFree() noexcept             { return { { (NodeID) freeNodeID, 0 } }; }
@@ -392,8 +381,8 @@ struct RenderSequenceBuilder
         int maxLatency = 0;
 
         for (auto&& c : graph.getConnections())
-            if (c.destNodeId == nodeID)
-                maxLatency = jmax (maxLatency, getNodeDelay (c.sourceNodeId));
+            if (c.destination.nodeID == nodeID)
+                maxLatency = jmax (maxLatency, getNodeDelay (c.source.nodeID));
 
         return maxLatency;
     }
@@ -406,7 +395,7 @@ struct RenderSequenceBuilder
         explicit NodeInputLookupTable (const ConnectionList& connections)
         {
             for (auto&& c : connections)
-                entries[c.destNodeId].add (c.sourceNodeId);
+                entries[c.destination.nodeID].add (c.source.nodeID);
         }
 
         bool isAnInputTo (NodeID sourceID, NodeID destID) const noexcept
@@ -721,13 +710,14 @@ struct RenderSequenceBuilder
     }
 
     //==============================================================================
-    Array<NodeAndChannel> getSourcesForChannel (AudioProcessorGraph::Node& node, int inputChannelIndex)
+    Array<AudioProcessorGraph::NodeAndChannel> getSourcesForChannel (AudioProcessorGraph::Node& node, int inputChannelIndex)
     {
-        Array<NodeAndChannel> results;
+        Array<AudioProcessorGraph::NodeAndChannel> results;
+        AudioProcessorGraph::NodeAndChannel nc { node.nodeId, inputChannelIndex };
 
         for (auto&& c : graph.getConnections())
-            if (c.destNodeId == node.nodeId && c.destChannelIndex == inputChannelIndex)
-                results.add ({ c.sourceNodeId, c.sourceChannelIndex });
+            if (c.destination == nc)
+                results.add (c.source);
 
         return results;
     }
@@ -742,11 +732,11 @@ struct RenderSequenceBuilder
         return buffers.size() - 1;
     }
 
-    int getBufferContaining (NodeAndChannel output) const noexcept
+    int getBufferContaining (AudioProcessorGraph::NodeAndChannel output) const noexcept
     {
         int i = 0;
 
-        for (auto& b : output.channelIndex == AudioProcessorGraph::midiChannelIndex ? midiBuffers : audioBuffers)
+        for (auto& b : output.isMIDI() ? midiBuffers : audioBuffers)
         {
             if (b.channel == output)
                 return i;
@@ -766,24 +756,23 @@ struct RenderSequenceBuilder
 
     bool isBufferNeededLater (int stepIndexToSearchFrom,
                               int inputChannelOfIndexToIgnore,
-                              NodeAndChannel output) const
+                              AudioProcessorGraph::NodeAndChannel output) const
     {
         while (stepIndexToSearchFrom < orderedNodes.size())
         {
             auto* node = orderedNodes.getUnchecked (stepIndexToSearchFrom);
 
-            if (output.channelIndex == AudioProcessorGraph::midiChannelIndex)
+            if (output.isMIDI())
             {
                 if (inputChannelOfIndexToIgnore != AudioProcessorGraph::midiChannelIndex
-                     && graph.isConnected ({ output.nodeID, AudioProcessorGraph::midiChannelIndex,
-                                             node->nodeId,  AudioProcessorGraph::midiChannelIndex }))
+                    && graph.isConnected ({ { output.nodeID, AudioProcessorGraph::midiChannelIndex },
+                                            { node->nodeId,  AudioProcessorGraph::midiChannelIndex } }))
                     return true;
             }
             else
             {
                 for (int i = 0; i < node->getProcessor()->getTotalNumInputChannels(); ++i)
-                    if (i != inputChannelOfIndexToIgnore
-                         && graph.isConnected ({ output.nodeID, output.channelIndex, node->nodeId, i }))
+                    if (i != inputChannelOfIndexToIgnore && graph.isConnected ({ output, { node->nodeId, i } }))
                         return true;
             }
 
@@ -798,36 +787,33 @@ struct RenderSequenceBuilder
 };
 
 //==============================================================================
-AudioProcessorGraph::Connection::Connection (NodeID srcID, int srcChan, NodeID dstID, int dstChan) noexcept
-    : sourceNodeId (srcID), sourceChannelIndex (srcChan), destNodeId (dstID), destChannelIndex (dstChan)
+AudioProcessorGraph::Connection::Connection (NodeAndChannel src, NodeAndChannel dst) noexcept
+    : source (src), destination (dst)
 {
 }
 
 bool AudioProcessorGraph::Connection::operator== (const Connection& other) const noexcept
 {
-    return sourceNodeId == other.sourceNodeId
-        && sourceChannelIndex == other.sourceChannelIndex
-        && destNodeId == other.destNodeId
-        && destChannelIndex == other.destChannelIndex;
-}
-
-bool AudioProcessorGraph::Connection::operator< (const Connection& other) const noexcept
-{
-    if (sourceNodeId != other.sourceNodeId)
-        return sourceNodeId < other.sourceNodeId;
-
-    if (destNodeId != other.destNodeId)
-        return destNodeId < other.destNodeId;
-
-    if (sourceChannelIndex != other.sourceChannelIndex)
-        return sourceChannelIndex < other.sourceChannelIndex;
-
-    return destChannelIndex < other.destChannelIndex;
+    return source == other.source && destination == other.destination;
 }
 
 bool AudioProcessorGraph::Connection::operator!= (const Connection& c) const noexcept
 {
     return ! operator== (c);
+}
+
+bool AudioProcessorGraph::Connection::operator< (const Connection& other) const noexcept
+{
+    if (source.nodeID != other.source.nodeID)
+        return source.nodeID < other.source.nodeID;
+
+    if (destination.nodeID != other.destination.nodeID)
+        return destination.nodeID < other.destination.nodeID;
+
+    if (source.channelIndex != other.source.channelIndex)
+        return source.channelIndex < other.source.channelIndex;
+
+    return destination.channelIndex < other.destination.channelIndex;
 }
 
 //==============================================================================
@@ -837,8 +823,8 @@ AudioProcessorGraph::Node::Node (NodeID nodeID, AudioProcessor* p) noexcept
     jassert (processor != nullptr);
 }
 
-void AudioProcessorGraph::Node::prepare (const double newSampleRate, const int newBlockSize,
-                                         AudioProcessorGraph* const graph, ProcessingPrecision precision)
+void AudioProcessorGraph::Node::prepare (double newSampleRate, int newBlockSize,
+                                         AudioProcessorGraph* graph, ProcessingPrecision precision)
 {
     if (! isPrepared)
     {
@@ -1007,7 +993,7 @@ bool AudioProcessorGraph::isConnected (const Connection& c) const noexcept
 bool AudioProcessorGraph::isConnected (NodeID srcID, NodeID destID) const noexcept
 {
     for (auto&& c : connections)
-        if (c.sourceNodeId == srcID && c.destNodeId == destID)
+        if (c.source.nodeID == srcID && c.destination.nodeID == destID)
             return true;
 
     return false;
@@ -1015,24 +1001,24 @@ bool AudioProcessorGraph::isConnected (NodeID srcID, NodeID destID) const noexce
 
 bool AudioProcessorGraph::canConnect (const Connection& c) const
 {
-    if (c.sourceChannelIndex < 0
-         || c.destChannelIndex < 0
-         || c.sourceNodeId == c.destNodeId
-         || (c.destChannelIndex == midiChannelIndex) != (c.sourceChannelIndex == midiChannelIndex))
+    if (c.source.channelIndex < 0
+         || c.destination.channelIndex < 0
+         || c.source.nodeID == c.destination.nodeID
+         || c.destination.isMIDI() != c.source.isMIDI())
         return false;
 
-    auto* source = getNodeForId (c.sourceNodeId);
+    auto* source = getNodeForId (c.source.nodeID);
 
     if (source == nullptr
-         || (c.sourceChannelIndex != midiChannelIndex && c.sourceChannelIndex >= source->processor->getTotalNumOutputChannels())
-         || (c.sourceChannelIndex == midiChannelIndex && ! source->processor->producesMidi()))
+         || (! c.source.isMIDI() && c.source.channelIndex >= source->processor->getTotalNumOutputChannels())
+         || (c.source.isMIDI() && ! source->processor->producesMidi()))
         return false;
 
-    auto* dest = getNodeForId (c.destNodeId);
+    auto* dest = getNodeForId (c.destination.nodeID);
 
     if (dest == nullptr
-         || (c.destChannelIndex != midiChannelIndex && c.destChannelIndex >= dest->processor->getTotalNumInputChannels())
-         || (c.destChannelIndex == midiChannelIndex && ! dest->processor->acceptsMidi()))
+         || (! c.destination.isMIDI() && c.destination.channelIndex >= dest->processor->getTotalNumInputChannels())
+         || (c.destination.isMIDI() && ! dest->processor->acceptsMidi()))
         return false;
 
     return ! isConnected (c);
@@ -1085,7 +1071,7 @@ bool AudioProcessorGraph::disconnectNode (NodeID nodeID)
     auto oldSize = connections.size();
 
     connections.erase (std::remove_if (connections.begin(), connections.end(),
-                                      [nodeID] (const Connection& c) { return c.sourceNodeId == nodeID || c.destNodeId == nodeID; }),
+                                      [nodeID] (const Connection& c) { return c.source.nodeID == nodeID || c.destination.nodeID == nodeID; }),
                        connections.end());
 
     return oldSize != connections.size();
@@ -1093,12 +1079,12 @@ bool AudioProcessorGraph::disconnectNode (NodeID nodeID)
 
 bool AudioProcessorGraph::isConnectionLegal (const Connection& c) const
 {
-    if (auto* source = getNodeForId (c.sourceNodeId))
-        if (auto* dest = getNodeForId (c.destNodeId))
-            return (c.sourceChannelIndex != midiChannelIndex ? isPositiveAndBelow (c.sourceChannelIndex, source->processor->getTotalNumOutputChannels())
-                                                             : source->processor->producesMidi())
-                && (c.destChannelIndex   != midiChannelIndex ? isPositiveAndBelow (c.destChannelIndex, dest->processor->getTotalNumInputChannels())
-                                                             : dest->processor->acceptsMidi());
+    if (auto* source = getNodeForId (c.source.nodeID))
+        if (auto* dest = getNodeForId (c.destination.nodeID))
+            return (c.source.isMIDI() ? source->processor->producesMidi()
+                                      : isPositiveAndBelow (c.source.channelIndex, source->processor->getTotalNumOutputChannels()))
+                && (c.destination.isMIDI() ? dest->processor->acceptsMidi()
+                                           : isPositiveAndBelow (c.destination.channelIndex, dest->processor->getTotalNumInputChannels()));
 
     return false;
 }
@@ -1132,8 +1118,8 @@ bool AudioProcessorGraph::isAnInputTo (NodeID src, NodeID dst, int recursionChec
     if (recursionCheck > 0)
     {
         for (auto&& c : connections)
-            if (c.destNodeId == dst
-                 && (c.sourceNodeId == src || isAnInputTo (src, c.sourceNodeId, recursionCheck - 1)))
+            if (c.destination.nodeID == dst
+                 && (c.source.nodeID == src || isAnInputTo (src, c.source.nodeID, recursionCheck - 1)))
                 return true;
     }
 

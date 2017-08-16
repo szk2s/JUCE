@@ -445,10 +445,10 @@ XmlElement* FilterGraph::createXml() const
     {
         auto e = xml->createNewChildElement ("CONNECTION");
 
-        e->setAttribute ("srcFilter", (int) connection.sourceNodeId);
-        e->setAttribute ("srcChannel", connection.sourceChannelIndex);
-        e->setAttribute ("dstFilter", (int) connection.destNodeId);
-        e->setAttribute ("dstChannel", connection.destChannelIndex);
+        e->setAttribute ("srcFilter", (int) connection.source.nodeID);
+        e->setAttribute ("srcChannel", connection.source.channelIndex);
+        e->setAttribute ("dstFilter", (int) connection.destination.nodeID);
+        e->setAttribute ("dstChannel", connection.destination.channelIndex);
     }
 
     return xml;
@@ -466,10 +466,8 @@ void FilterGraph::restoreFromXml (const XmlElement& xml)
 
     forEachXmlChildElementWithTagName (xml, e, "CONNECTION")
     {
-        addConnection ({ (NodeID) e->getIntAttribute ("srcFilter"),
-                          e->getIntAttribute ("srcChannel"),
-                          (NodeID) e->getIntAttribute ("dstFilter"),
-                          e->getIntAttribute ("dstChannel") });
+        addConnection ({ { (NodeID) e->getIntAttribute ("srcFilter"), e->getIntAttribute ("srcChannel") },
+                         { (NodeID) e->getIntAttribute ("dstFilter"), e->getIntAttribute ("dstChannel") } });
     }
 
     graph.removeIllegalConnections();

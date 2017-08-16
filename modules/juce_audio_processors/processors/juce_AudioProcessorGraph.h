@@ -57,6 +57,14 @@ public:
     typedef uint32 NodeID;
 
     //==============================================================================
+    /** A special index that represents the midi channel of a node.
+
+        This is used as a channel index value if you want to refer to the midi input
+        or output instead of an audio channel.
+    */
+    enum { midiChannelIndex = 0x1000 };
+
+    //==============================================================================
     /** Represents one of the nodes, or processors, in an AudioProcessorGraph.
 
         To create a node, call AudioProcessorGraph::addNode().
@@ -102,6 +110,21 @@ public:
     };
 
     //==============================================================================
+    /**
+        Represents an input or output channel of a node in an AudioProcessorGraph.
+    */
+    struct NodeAndChannel
+    {
+        NodeID nodeID;
+        int channelIndex;
+
+        bool isMIDI() const noexcept                                    { return channelIndex == midiChannelIndex; }
+
+        bool operator== (const NodeAndChannel& other) const noexcept    { return nodeID == other.nodeID && channelIndex == other.channelIndex; }
+        bool operator!= (const NodeAndChannel& other) const noexcept    { return ! operator== (other); }
+    };
+
+    //==============================================================================
     /** Represents a connection between two channels of two nodes in an AudioProcessorGraph.
 
         To create a connection, use AudioProcessorGraph::addConnection().
@@ -109,8 +132,7 @@ public:
     struct JUCE_API  Connection
     {
         //==============================================================================
-        Connection (NodeID sourceNodeID, int sourceChannelIndex,
-                    NodeID destNodeID, int destChannelIndex) noexcept;
+        Connection (NodeAndChannel source, NodeAndChannel destination) noexcept;
 
         Connection (const Connection&) = default;
         Connection& operator= (const Connection&) = default;
@@ -120,33 +142,11 @@ public:
         bool operator<  (const Connection&) const noexcept;
 
         //==============================================================================
-        /** The ID of the node which is the input source for this connection.
-            @see AudioProcessorGraph::getNodeForId
-        */
-        NodeID sourceNodeId;
+        /** The channel and node which is the input source for this connection. */
+        NodeAndChannel source;
 
-        /** The index of the output channel of the source node from which this
-            connection takes its data.
-
-            If this value is the special number AudioProcessorGraph::midiChannelIndex, then
-            it is referring to the source node's midi output. Otherwise, it is the zero-based
-            index of an audio output channel in the source node.
-        */
-        int sourceChannelIndex;
-
-        /** The ID number of the node which is the destination for this connection.
-            @see AudioProcessorGraph::getNodeForId
-        */
-        NodeID destNodeId;
-
-        /** The index of the input channel of the destination node to which this
-            connection delivers its data.
-
-            If this value is the special number AudioProcessorGraph::midiChannelIndex, then
-            it is referring to the destination node's midi input. Otherwise, it is the zero-based
-            index of an audio input channel in the destination node.
-        */
-        int destChannelIndex;
+        /** The channel and node which is the input source for this connection. */
+        NodeAndChannel destination;
     };
 
     //==============================================================================
@@ -237,15 +237,6 @@ public:
         their channel counts, which could render some connections obsolete.
     */
     bool removeIllegalConnections();
-
-    //==============================================================================
-    /** A special number that represents the midi channel of a node.
-
-        This is used as a channel index value if you want to refer to the midi input
-        or output instead of an audio channel.
-    */
-    static const int midiChannelIndex;
-
 
     //==============================================================================
     /** A special type of AudioProcessor that can live inside an AudioProcessorGraph

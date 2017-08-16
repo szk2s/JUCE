@@ -217,14 +217,14 @@ void PluginWindow::closeButtonPressed()
 struct PinComponent   : public Component,
                         public SettableTooltipClient
 {
-    PinComponent (FilterGraph& g, uint32 id, int i, bool isIn)
-        : graph (g), pluginID (id), index (i), isInput (isIn)
+    PinComponent (FilterGraph& g, AudioProcessorGraph::NodeAndChannel pinToUse, bool isIn)
+        : graph (g), pin (pinToUse), isInput (isIn)
     {
-        if (auto node = graph.getNodeForId (pluginID))
+        if (auto node = graph.getNodeForId (pin.nodeID))
         {
             String tip;
 
-            if (index == FilterGraph::midiChannelNumber)
+            if (pin.channelIndex == FilterGraph::midiChannelNumber)
             {
                 tip = isInput ? "MIDI Input"
                               : "MIDI Output";
@@ -232,13 +232,13 @@ struct PinComponent   : public Component,
             else
             {
                 auto& processor = *node->getProcessor();
-                auto channel = processor.getOffsetInBusBufferForAbsoluteChannelIndex (isInput, index, busIdx);
+                auto channel = processor.getOffsetInBusBufferForAbsoluteChannelIndex (isInput, pin.channelIndex, busIdx);
 
                 if (auto* bus = processor.getBus (isInput, busIdx))
                     tip = bus->getName() + ": " + AudioChannelSet::getAbbreviatedChannelTypeName (bus->getCurrentLayout().getTypeOfChannel (channel));
                 else
                     tip = (isInput ? "Main Input: "
-                                   : "Main Output: ") + String (index + 1);
+                                   : "Main Output: ") + String (pin.channelIndex + 1);
 
             }
 
@@ -257,7 +257,7 @@ struct PinComponent   : public Component,
         p.addEllipse (w * 0.25f, h * 0.25f, w * 0.5f, h * 0.5f);
         p.addRectangle (w * 0.4f, isInput ? (0.5f * h) : 0.0f, w * 0.2f, h * 0.5f);
 
-        auto colour = (index == FilterGraph::midiChannelNumber ? Colours::red : Colours::green);
+        auto colour = (pin.channelIndex == FilterGraph::midiChannelNumber ? Colours::red : Colours::green);
 
         g.setColour (colour.withRotatedHue (static_cast<float> (busIdx) / 5.0f));
         g.fillPath (p);
@@ -265,8 +265,10 @@ struct PinComponent   : public Component,
 
     void mouseDown (const MouseEvent& e) override
     {
-        getGraphPanel()->beginConnectorDrag (isInput ? 0 : pluginID, index,
-                                             isInput ? pluginID : 0, index,
+        AudioProcessorGraph::NodeAndChannel dummy { 0, 0 };
+
+        getGraphPanel()->beginConnectorDrag (isInput ? dummy : pin,
+                                             isInput ? pin : dummy,
                                              e);
     }
 
@@ -286,8 +288,7 @@ struct PinComponent   : public Component,
     }
 
     FilterGraph& graph;
-    const uint32 pluginID;
-    const int index;
+    AudioProcessorGraph::NodeAndChannel pin;
     const bool isInput;
     int busIdx = 0;
 
@@ -445,11 +446,12 @@ struct FilterComponent   : public Component
                     if (auto* pin = dynamic_cast<PinComponent*> (child))
                     {
                         const bool isInput = pin->isInput;
+                        auto channelIndex = pin->pin.channelIndex;
                         int busIdx = 0;
-                        processor->getOffsetInBusBufferForAbsoluteChannelIndex (isInput, pin->index, busIdx);
+                        processor->getOffsetInBusBufferForAbsoluteChannelIndex (isInput, channelIndex, busIdx);
 
                         const int total = isInput ? numIns : numOuts;
-                        const int index = pin->index == FilterGraph::midiChannelNumber ? (total - 1) : pin->index;
+                        const int index = channelIndex == FilterGraph::midiChannelNumber ? (total - 1) : channelIndex;
 
                         auto totalSpaces = static_cast<float> (total) + (static_cast<float> (jmax (0, processor->getBusCount (isInput) - 1)) * 0.5f);
                         auto indexPos = static_cast<float> (index) + (static_cast<float> (busIdx) * 0.5f);
@@ -467,7 +469,7 @@ struct FilterComponent   : public Component
     {
         for (auto* child : getChildren())
             if (auto* pin = dynamic_cast<PinComponent*> (child))
-                if (pin->index == index && isInput == pin->isInput)
+                if (pin->pin.channelIndex == index && isInput == pin->isInput)
                     return getPosition().toFloat() + pin->getBounds().getCentre().toFloat();
 
         return {};
@@ -517,18 +519,17 @@ struct FilterComponent   : public Component
 
             deleteAllChildren();
 
-            int i;
-            for (i = 0; i < f->getProcessor()->getTotalNumInputChannels(); ++i)
-                addAndMakeVisible (new PinComponent (graph, pluginID, i, true));
+            for (int i = 0; i < f->getProcessor()->getTotalNumInputChannels(); ++i)
+                addAndMakeVisible (new PinComponent (graph, { pluginID, i }, true));
 
             if (f->getProcessor()->acceptsMidi())
-                addAndMakeVisible (new PinComponent (graph, pluginID, FilterGraph::midiChannelNumber, true));
+                addAndMakeVisible (new PinComponent (graph, { pluginID, FilterGraph::midiChannelNumber }, true));
 
-            for (i = 0; i < f->getProcessor()->getTotalNumOutputChannels(); ++i)
-                addAndMakeVisible (new PinComponent (graph, pluginID, i, false));
+            for (int i = 0; i < f->getProcessor()->getTotalNumOutputChannels(); ++i)
+                addAndMakeVisible (new PinComponent (graph, { pluginID, i }, false));
 
             if (f->getProcessor()->producesMidi())
-                addAndMakeVisible (new PinComponent (graph, pluginID, FilterGraph::midiChannelNumber, false));
+                addAndMakeVisible (new PinComponent (graph, { pluginID, FilterGraph::midiChannelNumber }, false));
 
             resized();
         }
@@ -559,22 +560,20 @@ struct ConnectorComponent   : public Component,
         setAlwaysOnTop (true);
     }
 
-    void setInput (uint32 newNodeID, int newChannel)
+    void setInput (AudioProcessorGraph::NodeAndChannel newSource)
     {
-        if (connection.sourceNodeId != newNodeID || connection.sourceChannelIndex != newChannel)
+        if (connection.source != newSource)
         {
-            connection.sourceNodeId = newNodeID;
-            connection.sourceChannelIndex = newChannel;
+            connection.source = newSource;
             update();
         }
     }
 
-    void setOutput (uint32 newNodeID, int newChannel)
+    void setOutput (AudioProcessorGraph::NodeAndChannel newDest)
     {
-        if (connection.destNodeId != newNodeID || connection.destChannelIndex != newChannel)
+        if (connection.destination != newDest)
         {
-            connection.destNodeId = newNodeID;
-            connection.destChannelIndex = newChannel;
+            connection.destination = newDest;
             update();
         }
     }
@@ -622,18 +621,18 @@ struct ConnectorComponent   : public Component,
 
         if (auto* hostPanel = getGraphPanel())
         {
-            if (auto* src = hostPanel->getComponentForFilter (connection.sourceNodeId))
-                p1 = src->getPinPos (connection.sourceChannelIndex, false);
+            if (auto* src = hostPanel->getComponentForFilter (connection.source.nodeID))
+                p1 = src->getPinPos (connection.source.channelIndex, false);
 
-            if (auto* dest = hostPanel->getComponentForFilter (connection.destNodeId))
-                p2 = dest->getPinPos (connection.destChannelIndex, true);
+            if (auto* dest = hostPanel->getComponentForFilter (connection.destination.nodeID))
+                p2 = dest->getPinPos (connection.destination.channelIndex, true);
         }
     }
 
     void paint (Graphics& g) override
     {
-        if (connection.sourceChannelIndex == FilterGraph::midiChannelNumber
-             || connection.destChannelIndex == FilterGraph::midiChannelNumber)
+        if (connection.source.channelIndex == FilterGraph::midiChannelNumber
+             || connection.destination.channelIndex == FilterGraph::midiChannelNumber)
         {
             g.setColour (Colours::red);
         }
@@ -682,8 +681,10 @@ struct ConnectorComponent   : public Component,
             getDistancesFromEnds (getPosition().toFloat() + e.position, distanceFromStart, distanceFromEnd);
             const bool isNearerSource = (distanceFromStart < distanceFromEnd);
 
-            getGraphPanel()->beginConnectorDrag (isNearerSource ? 0 : connection.sourceNodeId, connection.sourceChannelIndex,
-                                                 isNearerSource ? connection.destNodeId : 0,   connection.destChannelIndex,
+            AudioProcessorGraph::NodeAndChannel dummy { 0, 0 };
+
+            getGraphPanel()->beginConnectorDrag (isNearerSource ? dummy : connection.source,
+                                                 isNearerSource ? connection.destination : dummy,
                                                  e);
         }
     }
@@ -748,7 +749,7 @@ struct ConnectorComponent   : public Component,
     }
 
     FilterGraph& graph;
-    AudioProcessorGraph::Connection connection { 0, 0, 0, 0 };
+    AudioProcessorGraph::Connection connection { { 0, 0 }, { 0, 0 } };
     Point<float> lastInputPos, lastOutputPos;
     Path linePath, hitPath;
     bool dragging = false;
@@ -876,14 +877,14 @@ void GraphEditorPanel::updateComponents()
             auto* comp = new ConnectorComponent (graph);
             addAndMakeVisible (comp);
 
-            comp->setInput (c.sourceNodeId, c.sourceChannelIndex);
-            comp->setOutput (c.destNodeId, c.destChannelIndex);
+            comp->setInput (c.source);
+            comp->setOutput (c.destination);
         }
     }
 }
 
-void GraphEditorPanel::beginConnectorDrag (const uint32 sourceFilterID, const int sourceFilterChannel,
-                                           const uint32 destFilterID, const int destFilterChannel,
+void GraphEditorPanel::beginConnectorDrag (AudioProcessorGraph::NodeAndChannel source,
+                                           AudioProcessorGraph::NodeAndChannel dest,
                                            const MouseEvent& e)
 {
     draggingConnector = dynamic_cast<ConnectorComponent*> (e.originalComponent);
@@ -891,8 +892,8 @@ void GraphEditorPanel::beginConnectorDrag (const uint32 sourceFilterID, const in
     if (draggingConnector == nullptr)
         draggingConnector = new ConnectorComponent (graph);
 
-    draggingConnector->setInput (sourceFilterID, sourceFilterChannel);
-    draggingConnector->setOutput (destFilterID, destFilterChannel);
+    draggingConnector->setInput (source);
+    draggingConnector->setOutput (dest);
 
     addAndMakeVisible (draggingConnector);
     draggingConnector->toFront (false);
@@ -914,15 +915,13 @@ void GraphEditorPanel::dragConnector (const MouseEvent& e)
         {
             auto connection = draggingConnector->connection;
 
-            if (connection.sourceNodeId == 0 && ! pin->isInput)
+            if (connection.source.nodeID == 0 && ! pin->isInput)
             {
-                connection.sourceNodeId = pin->pluginID;
-                connection.sourceChannelIndex = pin->index;
+                connection.source = pin->pin;
             }
-            else if (connection.destNodeId == 0 && pin->isInput)
+            else if (connection.destination.nodeID == 0 && pin->isInput)
             {
-                connection.destNodeId = pin->pluginID;
-                connection.destChannelIndex = pin->index;
+                connection.destination = pin->pin;
             }
 
             if (graph.getGraph().canConnect (connection))
@@ -932,7 +931,7 @@ void GraphEditorPanel::dragConnector (const MouseEvent& e)
             }
         }
 
-        if (draggingConnector->connection.sourceNodeId == 0)
+        if (draggingConnector->connection.source.nodeID == 0)
             draggingConnector->dragStart (pos);
         else
             draggingConnector->dragEnd (pos);
@@ -953,21 +952,19 @@ void GraphEditorPanel::endDraggingConnector (const MouseEvent& e)
 
     if (auto* pin = findPinAt (e2.position))
     {
-        if (connection.sourceNodeId == 0)
+        if (connection.source.nodeID == 0)
         {
             if (pin->isInput)
                 return;
 
-            connection.sourceNodeId = pin->pluginID;
-            connection.sourceChannelIndex = pin->index;
+            connection.source = pin->pin;
         }
         else
         {
             if (! pin->isInput)
                 return;
 
-            connection.destNodeId = pin->pluginID;
-            connection.destChannelIndex = pin->index;
+            connection.destination = pin->pin;
         }
 
         graph.addConnection (connection);

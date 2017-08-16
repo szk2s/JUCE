@@ -58,11 +58,11 @@ public:
     void updateComponents();
 
     //==============================================================================
-    void beginConnectorDrag (uint32 sourceFilterID, int sourceFilterChannel,
-                             uint32 destFilterID, int destFilterChannel,
-                             const MouseEvent& e);
-    void dragConnector (const MouseEvent& e);
-    void endDraggingConnector (const MouseEvent& e);
+    void beginConnectorDrag (AudioProcessorGraph::NodeAndChannel source,
+                             AudioProcessorGraph::NodeAndChannel dest,
+                             const MouseEvent&);
+    void dragConnector (const MouseEvent&);
+    void endDraggingConnector (const MouseEvent&);
 
     //==============================================================================
 private:
