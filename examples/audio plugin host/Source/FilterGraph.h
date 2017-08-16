@@ -52,18 +52,18 @@ public:
     int getNumFilters() const noexcept;
     AudioProcessorGraph::Node::Ptr getNode (int index) const noexcept;
 
-    AudioProcessorGraph::Node::Ptr getNodeForId (uint32 uid) const;
+    AudioProcessorGraph::Node::Ptr getNodeForId (NodeID) const;
     AudioProcessorGraph::Node::Ptr getNodeForName (const String& name) const;
 
     void addFilter (const PluginDescription&, Point<double>);
 
-    void removeFilter (uint32 filterUID);
-    void disconnectFilter (uint32 filterUID);
+    void removeFilter (NodeID);
+    void disconnectFilter (NodeID);
 
     void removeIllegalConnections();
 
-    void setNodePosition (uint32 nodeId, double x, double y);
-    Point<double> getNodePosition (uint32 nodeId) const;
+    void setNodePosition (NodeID, Point<double>);
+    Point<double> getNodePosition (NodeID) const;
 
     //==============================================================================
     const std::vector<AudioProcessorGraph::Connection> getConnections() const noexcept      { return graph.getConnections(); }
@@ -101,8 +101,8 @@ private:
     AudioPluginFormatManager& formatManager;
     AudioProcessorGraph graph;
 
-    uint32 lastUID = 0;
-    uint32 getNextUID() noexcept;
+    NodeID lastUID = 0;
+    NodeID getNextUID() noexcept;
 
     void createNodeFromXml (const XmlElement& xml);
     void addFilterCallback (AudioPluginInstance*, const String& error, Point<double>);

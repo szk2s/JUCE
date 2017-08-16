@@ -340,15 +340,16 @@ struct FilterComponent   : public Component
                 graph.removeFilter (pluginID);
                 return;
             }
-            else if (r == 2)
+
+            if (r == 2)
             {
                 graph.disconnectFilter (pluginID);
             }
             else
             {
-                if (auto f = graph.getNodeForId (pluginID))
+                if (auto node = graph.getNodeForId (pluginID))
                 {
-                    auto* processor = f->getProcessor();
+                    auto* processor = node->getProcessor();
                     jassert (processor != nullptr);
 
                     if (r == 7)
@@ -369,9 +370,9 @@ struct FilterComponent   : public Component
                             case 6: type = PluginWindow::AudioIO; break;
 
                             default: break;
-                        };
+                        }
 
-                        if (auto* w = PluginWindow::getWindowFor (f, type))
+                        if (auto* w = PluginWindow::getWindowFor (node, type))
                             w->toFront (true);
                     }
                 }
@@ -388,9 +389,11 @@ struct FilterComponent   : public Component
             if (getParentComponent() != nullptr)
                 pos = getParentComponent()->getLocalPoint (nullptr, pos);
 
+            pos += getLocalBounds().getCentre();
+
             graph.setNodePosition (pluginID,
-                                   (pos.getX() + getWidth() / 2) / (double) getParentWidth(),
-                                   (pos.getY() + getHeight() / 2) / (double) getParentHeight());
+                                   { pos.x / (double) getParentWidth(),
+                                     pos.y / (double) getParentHeight() });
 
             getGraphPanel()->updateComponents();
         }

@@ -359,7 +359,7 @@ struct RenderSequenceBuilder
 
     Array<AssignedBuffer> audioBuffers, midiBuffers;
 
-    static int getReadOnlyEmptyBufferIndex() { return 0; }
+    enum { readOnlyEmptyBufferIndex = 0 };
 
     struct Delay
     {
@@ -370,7 +370,7 @@ struct RenderSequenceBuilder
     std::unordered_map<NodeID, int> delays;
     int totalLatency = 0;
 
-    int getNodeDelay (NodeID nodeID) const
+    int getNodeDelay (NodeID nodeID) const noexcept
     {
         auto n = delays.find (nodeID);
         return n != delays.end() ? n->second : 0;
@@ -454,7 +454,7 @@ struct RenderSequenceBuilder
         if (sources.isEmpty())
         {
             if (inputChan >= numOuts)
-                return getReadOnlyEmptyBufferIndex();
+                return readOnlyEmptyBufferIndex;
 
             auto index = getFreeBuffer (audioBuffers);
             sequence.addClearChannelOp (index);
@@ -472,7 +472,7 @@ struct RenderSequenceBuilder
             if (bufIndex < 0)
             {
                 // if not found, this is probably a feedback loop
-                bufIndex = getReadOnlyEmptyBufferIndex();
+                bufIndex = readOnlyEmptyBufferIndex;
                 jassert (bufIndex >= 0);
             }
 
@@ -765,8 +765,8 @@ struct RenderSequenceBuilder
             if (output.isMIDI())
             {
                 if (inputChannelOfIndexToIgnore != AudioProcessorGraph::midiChannelIndex
-                    && graph.isConnected ({ { output.nodeID, AudioProcessorGraph::midiChannelIndex },
-                                            { node->nodeId,  AudioProcessorGraph::midiChannelIndex } }))
+                     && graph.isConnected ({ { output.nodeID, AudioProcessorGraph::midiChannelIndex },
+                                             { node->nodeId,  AudioProcessorGraph::midiChannelIndex } }))
                     return true;
             }
             else
@@ -883,49 +883,41 @@ void AudioProcessorGraph::clear()
     triggerAsyncUpdate();
 }
 
-AudioProcessorGraph::Node* AudioProcessorGraph::getNodeForId (NodeID nodeId) const
+AudioProcessorGraph::Node* AudioProcessorGraph::getNodeForId (NodeID nodeID) const
 {
     for (auto* n : nodes)
-        if (n->nodeId == nodeId)
+        if (n->nodeId == nodeID)
             return n;
 
-    return nullptr;
+    return {};
 }
 
-AudioProcessorGraph::Node* AudioProcessorGraph::addNode (AudioProcessor* newProcessor, NodeID nodeId)
+AudioProcessorGraph::Node::Ptr AudioProcessorGraph::addNode (AudioProcessor* newProcessor, NodeID nodeID)
 {
     if (newProcessor == nullptr || newProcessor == this)
     {
         jassertfalse;
-        return nullptr;
+        return {};
     }
+
+    if (nodeID == 0)
+        nodeID = ++lastNodeID;
 
     for (auto* n : nodes)
     {
-        if (n->getProcessor() == newProcessor)
+        if (n->getProcessor() == newProcessor || n->nodeId == nodeID)
         {
-            jassertfalse; // Cannot add the same object to the graph twice!
-            return nullptr;
+            jassertfalse; // Cannot add two copies of the same processor, or duplicate node IDs!
+            return {};
         }
     }
 
-    if (nodeId == 0)
-    {
-        nodeId = ++lastNodeId;
-    }
-    else
-    {
-        // you can't add a node with an id that already exists in the graph..
-        jassert (getNodeForId (nodeId) == nullptr);
-        removeNode (nodeId);
-
-        if (nodeId > lastNodeId)
-            lastNodeId = nodeId;
-    }
+    if (nodeID > lastNodeID)
+        lastNodeID = nodeID;
 
     newProcessor->setPlayHead (getPlayHead());
 
-    auto* n = new Node (nodeId, newProcessor);
+    Node::Ptr n (new Node (nodeID, newProcessor));
     nodes.add (n);
 
     if (isPrepared)
@@ -937,12 +929,11 @@ AudioProcessorGraph::Node* AudioProcessorGraph::addNode (AudioProcessor* newProc
 
 bool AudioProcessorGraph::removeNode (NodeID nodeId)
 {
-    disconnectNode (nodeId);
-
     for (int i = nodes.size(); --i >= 0;)
     {
         if (nodes.getUnchecked(i)->nodeId == nodeId)
         {
+            disconnectNode (nodeId);
             nodes.remove (i);
 
             if (isPrepared)

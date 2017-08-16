@@ -165,7 +165,7 @@ public:
         This will return nullptr if the index is out of range.
         @see getNodeForId
     */
-    Node* getNode (const int index) const noexcept                  { return nodes [index]; }
+    Node* getNode (int index) const noexcept                        { return nodes [index]; }
 
     /** Searches the graph for a node with the given ID number and returns it.
         If no such node was found, this returns nullptr.
@@ -184,7 +184,7 @@ public:
 
         If this succeeds, it returns a pointer to the newly-created node.
     */
-    Node* addNode (AudioProcessor* newProcessor, NodeID nodeId = {});
+    Node::Ptr addNode (AudioProcessor* newProcessor, NodeID nodeId = {});
 
     /** Deletes a node within the graph which has the specified ID.
         This will also delete any connections that are attached to this node.
@@ -355,7 +355,7 @@ private:
     ReferenceCountedArray<Node> nodes;
     mutable std::vector<Connection> connections;
     mutable bool connectionsNeedSorting = false;
-    NodeID lastNodeId = {};
+    NodeID lastNodeID = {};
 
     struct RenderSequenceFloat;
     struct RenderSequenceDouble;
