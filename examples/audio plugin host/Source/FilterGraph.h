@@ -57,7 +57,7 @@ public:
     static String getOpenProp  (Type type)    { return "uiopen_"  + getTypeName (type); }
 
     FilterGraph& panel;
-    AudioProcessorGraph::Node* const owner;
+    const AudioProcessorGraph::Node::Ptr owner;
     const Type type;
 
 private:
@@ -82,16 +82,10 @@ public:
     //==============================================================================
     typedef AudioProcessorGraph::NodeID NodeID;
 
-    int getNumFilters() const noexcept;
-    AudioProcessorGraph::Node::Ptr getNode (int index) const noexcept;
+    void addPlugin (const PluginDescription&, Point<double>);
 
-    AudioProcessorGraph::Node::Ptr getNodeForId (NodeID) const;
     AudioProcessorGraph::Node::Ptr getNodeForName (const String& name) const;
 
-    void addFilter (const PluginDescription&, Point<double>);
-
-    void removeFilter (NodeID);
-    
     void setNodePosition (NodeID, Point<double>);
     Point<double> getNodePosition (NodeID) const;
 

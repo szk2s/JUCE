@@ -45,7 +45,6 @@ PluginWindow::PluginWindow (FilterGraph& g,
       type (t)
 {
     setSize (400, 300);
-
     setContentOwned (pluginEditor, true);
 
     setTopLeftPosition (owner->properties.getWithDefault (getLastXProp (type), Random::getSystemRandom().nextInt (500)),
@@ -187,11 +186,7 @@ FilterGraph::FilterGraph (AudioPluginFormatManager& fm)
                          "Save a filter graph"),
       formatManager (fm)
 {
-    InternalPluginFormat internalFormat;
-
-    addFilter (internalFormat.audioInDesc,  { 0.5,  0.1 });
-    addFilter (internalFormat.midiInDesc,   { 0.25, 0.1 });
-    addFilter (internalFormat.audioOutDesc, { 0.5,  0.9 });
+    newDocument();
 
     graph.addListener (this);
     graph.addChangeListener (this);
@@ -215,21 +210,10 @@ FilterGraph::NodeID FilterGraph::getNextUID() noexcept
 void FilterGraph::changeListenerCallback (ChangeBroadcaster*)
 {
     changed();
-}
 
-int FilterGraph::getNumFilters() const noexcept
-{
-    return graph.getNumNodes();
-}
-
-AudioProcessorGraph::Node::Ptr FilterGraph::getNode (int index) const noexcept
-{
-    return graph.getNode (index);
-}
-
-AudioProcessorGraph::Node::Ptr FilterGraph::getNodeForId (NodeID uid) const
-{
-    return graph.getNodeForId (uid);
+    for (int i = activePluginWindows.size(); --i >= 0;)
+        if (! graph.getNodes().contains (activePluginWindows.getUnchecked(i)->owner))
+            activePluginWindows.remove (i);
 }
 
 AudioProcessorGraph::Node::Ptr FilterGraph::getNodeForName (const String& name) const
@@ -242,7 +226,7 @@ AudioProcessorGraph::Node::Ptr FilterGraph::getNodeForName (const String& name) 
     return nullptr;
 }
 
-void FilterGraph::addFilter (const PluginDescription& desc, Point<double> p)
+void FilterGraph::addPlugin (const PluginDescription& desc, Point<double> p)
 {
     struct AsyncCallback : public AudioPluginFormat::InstantiationCompletionCallback
     {
@@ -283,12 +267,6 @@ void FilterGraph::addFilterCallback (AudioPluginInstance* instance, const String
             changed();
         }
     }
-}
-
-void FilterGraph::removeFilter (NodeID nodeID)
-{
-    closeCurrentlyOpenWindowsFor (nodeID);
-    graph.removeNode (nodeID);
 }
 
 void FilterGraph::setNodePosition (NodeID nodeID, Point<double> pos)
@@ -378,9 +356,9 @@ void FilterGraph::newDocument()
 
     InternalPluginFormat internalFormat;
 
-    addFilter (internalFormat.audioInDesc,  { 0.5,  0.1 });
-    addFilter (internalFormat.midiInDesc,   { 0.25, 0.1 });
-    addFilter (internalFormat.audioOutDesc, { 0.5,  0.9 });
+    addPlugin (internalFormat.audioInDesc,  { 0.5,  0.1 });
+    addPlugin (internalFormat.midiInDesc,   { 0.25, 0.1 });
+    addPlugin (internalFormat.audioOutDesc, { 0.5,  0.9 });
 
     setChangedFlag (false);
 }

@@ -37,7 +37,7 @@ struct PinComponent   : public Component,
     PinComponent (GraphEditorPanel& p, AudioProcessorGraph::NodeAndChannel pinToUse, bool isIn)
         : panel (p), graph (p.graph), pin (pinToUse), isInput (isIn)
     {
-        if (auto node = graph.getNodeForId (pin.nodeID))
+        if (auto node = graph.graph.getNodeForId (pin.nodeID))
         {
             String tip;
 
@@ -150,7 +150,7 @@ struct FilterComponent   : public Component
 
             if (r == 1)
             {
-                graph.removeFilter (pluginID);
+                graph.graph.removeNode (pluginID);
                 return;
             }
 
@@ -160,7 +160,7 @@ struct FilterComponent   : public Component
             }
             else
             {
-                if (auto node = graph.getNodeForId (pluginID))
+                if (auto node = graph.graph.getNodeForId (pluginID))
                 {
                     auto* processor = node->getProcessor();
                     jassert (processor != nullptr);
@@ -220,7 +220,7 @@ struct FilterComponent   : public Component
         }
         else if (e.getNumberOfClicks() == 2)
         {
-            if (auto f = graph.getNodeForId (pluginID))
+            if (auto f = graph.graph.getNodeForId (pluginID))
                 if (auto* w = graph.getOrCreateWindowFor (f, PluginWindow::Type::normal))
                     w->toFront (true);
         }
@@ -249,7 +249,7 @@ struct FilterComponent   : public Component
 
     void resized() override
     {
-        if (auto f = graph.getNodeForId (pluginID))
+        if (auto f = graph.graph.getNodeForId (pluginID))
         {
             if (auto* processor = f->getProcessor())
             {
@@ -289,7 +289,7 @@ struct FilterComponent   : public Component
 
     void update()
     {
-        const AudioProcessorGraph::Node::Ptr f (graph.getNodeForId (pluginID));
+        const AudioProcessorGraph::Node::Ptr f (graph.graph.getNodeForId (pluginID));
 
         if (f == nullptr)
         {
@@ -593,7 +593,7 @@ void GraphEditorPanel::mouseDown (const MouseEvent& e)
 
 void GraphEditorPanel::createNewPlugin (const PluginDescription& desc, Point<int> position)
 {
-    graph.addFilter (desc, position.toDouble() / Point<double> ((double) getWidth(), (double) getHeight()));
+    graph.addPlugin (desc, position.toDouble() / Point<double> ((double) getWidth(), (double) getHeight()));
 }
 
 FilterComponent* GraphEditorPanel::getComponentForFilter (const uint32 filterID) const
