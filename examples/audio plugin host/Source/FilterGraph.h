@@ -26,45 +26,8 @@
 
 #pragma once
 
-class FilterGraph;
+#include "PluginWindow.h"
 
-//==============================================================================
-/** A desktop window containing a plugin's GUI. */
-class PluginWindow  : public DocumentWindow
-{
-public:
-    enum class Type
-    {
-        normal = 0,
-        generic,
-        programs,
-        parameters,
-        audioIO,
-        numTypes
-    };
-
-    PluginWindow (FilterGraph&, AudioProcessorEditor*, AudioProcessorGraph::Node*, Type);
-    ~PluginWindow();
-
-    void moved() override;
-    void closeButtonPressed() override;
-
-    static AudioProcessorEditor* createProcessorEditor (AudioProcessor&, PluginWindow::Type);
-
-    static String getTypeName (Type);
-    static String getLastXProp (Type type)    { return "uiLastX_" + getTypeName (type); }
-    static String getLastYProp (Type type)    { return "uiLastY_" + getTypeName (type); }
-    static String getOpenProp  (Type type)    { return "uiopen_"  + getTypeName (type); }
-
-    FilterGraph& panel;
-    const AudioProcessorGraph::Node::Ptr owner;
-    const Type type;
-
-private:
-    float getDesktopScaleFactor() const override     { return 1.0f; }
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginWindow)
-};
 
 //==============================================================================
 /**

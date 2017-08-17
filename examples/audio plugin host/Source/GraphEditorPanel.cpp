@@ -76,7 +76,7 @@ struct GraphEditorPanel::PinComponent   : public Component,
 
         auto colour = (pin.isMIDI() ? Colours::red : Colours::green);
 
-        g.setColour (colour.withRotatedHue (static_cast<float> (busIdx) / 5.0f));
+        g.setColour (colour.withRotatedHue (busIdx / 5.0f));
         g.fillPath (p);
     }
 
@@ -129,63 +129,7 @@ struct GraphEditorPanel::FilterComponent   : public Component
         toFront (true);
 
         if (e.mods.isPopupMenu())
-        {
-            PopupMenu m;
-            m.addItem (1, "Delete this filter");
-            m.addItem (2, "Disconnect all pins");
-            m.addSeparator();
-            m.addItem (3, "Show plugin UI");
-            m.addItem (4, "Show all programs");
-            m.addItem (5, "Show all parameters");
-            m.addSeparator();
-            m.addItem (6, "Configure Audio I/O");
-            m.addItem (7, "Test state save/load");
-
-            auto r = m.show();
-
-            if (r == 1)
-            {
-                graph.graph.removeNode (pluginID);
-                return;
-            }
-
-            if (r == 2)
-            {
-                graph.graph.disconnectNode (pluginID);
-            }
-            else
-            {
-                if (auto node = graph.graph.getNodeForId (pluginID))
-                {
-                    auto* processor = node->getProcessor();
-                    jassert (processor != nullptr);
-
-                    if (r == 7)
-                    {
-                        MemoryBlock state;
-                        processor->getStateInformation (state);
-                        processor->setStateInformation (state.getData(), (int) state.getSize());
-                    }
-                    else
-                    {
-                        auto type = processor->hasEditor() ? PluginWindow::Type::normal
-                                                           : PluginWindow::Type::generic;
-
-                        switch (r)
-                        {
-                            case 4: type = PluginWindow::Type::programs; break;
-                            case 5: type = PluginWindow::Type::parameters; break;
-                            case 6: type = PluginWindow::Type::audioIO; break;
-
-                            default: break;
-                        }
-
-                        if (auto* w = graph.getOrCreateWindowFor (node, type))
-                            w->toFront (true);
-                    }
-                }
-            }
-        }
+            showPopupMenu();
     }
 
     void mouseDrag (const MouseEvent& e) override
@@ -331,6 +275,57 @@ struct GraphEditorPanel::FilterComponent   : public Component
 
             resized();
         }
+    }
+
+    AudioProcessor* getProcessor() const
+    {
+        if (auto node = graph.graph.getNodeForId (pluginID))
+            return node->getProcessor();
+
+        return {};
+    }
+
+    void showPopupMenu()
+    {
+        PopupMenu m;
+        m.addItem (1, "Delete this filter");
+        m.addItem (2, "Disconnect all pins");
+        m.addSeparator();
+        m.addItem (10, "Show plugin GUI");
+        m.addItem (11, "Show all programs");
+        m.addItem (12, "Show all parameters");
+        m.addSeparator();
+        m.addItem (20, "Configure Audio I/O");
+        m.addItem (21, "Test state save/load");
+
+        switch (m.show())
+        {
+            case 1:   graph.graph.removeNode (pluginID); break;
+            case 2:   graph.graph.disconnectNode (pluginID); break;
+            case 10:  showWindow (PluginWindow::Type::normal); break;
+            case 11:  showWindow (PluginWindow::Type::programs); break;
+            case 12:  showWindow (PluginWindow::Type::generic); break;
+            case 20:  showWindow (PluginWindow::Type::audioIO); break;
+            case 21:  testStateSaveLoad(); break;
+            default:  break;
+        }
+    }
+
+    void testStateSaveLoad()
+    {
+        if (auto* processor = getProcessor())
+        {
+            MemoryBlock state;
+            processor->getStateInformation (state);
+            processor->setStateInformation (state.getData(), (int) state.getSize());
+        }
+    }
+
+    void showWindow (PluginWindow::Type type)
+    {
+        if (auto node = graph.graph.getNodeForId (pluginID))
+            if (auto* w = graph.getOrCreateWindowFor (node, type))
+                w->toFront (true);
     }
 
     GraphEditorPanel& panel;

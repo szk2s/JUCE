@@ -151,6 +151,7 @@
           file="Source/MainHostWindow.cpp"/>
     <FILE id="h1kpxyzHi" name="MainHostWindow.h" compile="0" resource="0"
           file="Source/MainHostWindow.h"/>
+    <FILE id="ZwQDmm" name="PluginWindow.h" compile="0" resource="0" file="Source/PluginWindow.h"/>
   </MAINGROUP>
   <JUCEOPTIONS JUCE_WASAPI="enabled" JUCE_DIRECTSOUND="enabled" JUCE_ALSA="enabled"
                JUCE_QUICKTIME="disabled" JUCE_USE_FLAC="disabled" JUCE_USE_OGGVORBIS="disabled"

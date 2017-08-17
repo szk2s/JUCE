@@ -23,12 +23,14 @@
 
   ==============================================================================
 */
+
 #include "../JuceLibraryCode/JuceHeader.h"
 #include "GraphEditorPanel.h"
 #include "InternalFilters.h"
 #include "MainHostWindow.h"
 
 #include "FilterIOConfiguration.h"
+
 
 //==============================================================================
 struct NumberedBoxes  : public TableListBox,
@@ -99,6 +101,10 @@ struct NumberedBoxes  : public TableListBox,
 
 private:
     //==============================================================================
+    Listener& listener;
+    bool canAddColumn, canRemoveColumn;
+
+    //==============================================================================
     int getNumRows() override                                             { return 1; }
     void paintCell (Graphics&, int, int, int, int, bool) override         {}
     void paintRowBackground (Graphics& g, int, int, int, bool) override   { g.fillAll (Colours::grey); }
@@ -164,9 +170,7 @@ private:
             listener.columnSelected (text.getIntValue());
     }
 
-    //==============================================================================
-    Listener& listener;
-    bool canAddColumn, canRemoveColumn;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NumberedBoxes)
 };
 
 //==============================================================================

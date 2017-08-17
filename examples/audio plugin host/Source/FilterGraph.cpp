@@ -29,153 +29,6 @@
 #include "FilterGraph.h"
 #include "InternalFilters.h"
 #include "GraphEditorPanel.h"
-#include "FilterIOConfiguration.h"
-
-
-//==============================================================================
-PluginWindow::PluginWindow (FilterGraph& g,
-                            AudioProcessorEditor* pluginEditor,
-                            AudioProcessorGraph::Node* o,
-                            Type t)
-    : DocumentWindow (pluginEditor->getName(),
-                      LookAndFeel::getDefaultLookAndFeel().findColour (ResizableWindow::backgroundColourId),
-                      DocumentWindow::minimiseButton | DocumentWindow::closeButton),
-      panel (g),
-      owner (o),
-      type (t)
-{
-    setSize (400, 300);
-    setContentOwned (pluginEditor, true);
-
-    setTopLeftPosition (owner->properties.getWithDefault (getLastXProp (type), Random::getSystemRandom().nextInt (500)),
-                        owner->properties.getWithDefault (getLastYProp (type), Random::getSystemRandom().nextInt (500)));
-
-    owner->properties.set (getOpenProp (type), true);
-
-    setVisible (true);
-}
-
-PluginWindow::~PluginWindow()
-{
-    clearContentComponent();
-}
-
-void PluginWindow::moved()
-{
-    owner->properties.set (getLastXProp (type), getX());
-    owner->properties.set (getLastYProp (type), getY());
-}
-
-void PluginWindow::closeButtonPressed()
-{
-    owner->properties.set (getOpenProp (type), false);
-    panel.closeCurrentlyOpenWindowsFor (owner->nodeId);
-}
-
-String PluginWindow::getTypeName (Type type)
-{
-    switch (type)
-    {
-        case Type::normal:     return "Normal";
-        case Type::generic:    return "Generic";
-        case Type::programs:   return "Programs";
-        case Type::parameters: return "Parameters";
-        case Type::audioIO:    return "IO";
-        default:               return {};
-    }
-}
-
-//==============================================================================
-struct ProgramAudioProcessorEditor  : public AudioProcessorEditor
-{
-    ProgramAudioProcessorEditor (AudioProcessor& p)  : AudioProcessorEditor (p)
-    {
-        setOpaque (true);
-
-        addAndMakeVisible (panel);
-
-        Array<PropertyComponent*> programs;
-
-        auto numPrograms = p.getNumPrograms();
-        int totalHeight = 0;
-
-        for (int i = 0; i < numPrograms; ++i)
-        {
-            auto name = p.getProgramName (i).trim();
-
-            if (name.isEmpty())
-                name = "Unnamed";
-
-            auto pc = new PropertyComp (name, p);
-            programs.add (pc);
-            totalHeight += pc->getPreferredHeight();
-        }
-
-        panel.addProperties (programs);
-
-        setSize (400, jlimit (25, 400, totalHeight));
-    }
-
-    void paint (Graphics& g) override
-    {
-        g.fillAll (Colours::grey);
-    }
-
-    void resized() override
-    {
-        panel.setBounds (getLocalBounds());
-    }
-
-private:
-    struct PropertyComp  : public PropertyComponent,
-                           private AudioProcessorListener
-    {
-        PropertyComp (const String& name, AudioProcessor& p)  : PropertyComponent (name), owner (p)
-        {
-            owner.addListener (this);
-        }
-
-        ~PropertyComp()
-        {
-            owner.removeListener (this);
-        }
-
-        void refresh() override {}
-        void audioProcessorChanged (AudioProcessor*) override {}
-        void audioProcessorParameterChanged (AudioProcessor*, int, float) override {}
-
-        AudioProcessor& owner;
-
-        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PropertyComp)
-    };
-
-    PropertyPanel panel;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProgramAudioProcessorEditor)
-};
-
-AudioProcessorEditor* PluginWindow::createProcessorEditor (AudioProcessor& processor, PluginWindow::Type type)
-{
-    if (type == PluginWindow::Type::normal)
-    {
-        if (auto* ui = processor.createEditorIfNeeded())
-            return ui;
-
-        type = PluginWindow::Type::generic;
-    }
-
-    if (type == PluginWindow::Type::generic || type == PluginWindow::Type::parameters)
-        return new GenericAudioProcessorEditor (&processor);
-
-    if (type == PluginWindow::Type::programs)
-        return new ProgramAudioProcessorEditor (processor);
-
-    if (type == PluginWindow::Type::audioIO)
-        return new FilterIOConfigurationWindow (processor);
-
-    jassertfalse;
-    return {};
-}
 
 
 //==============================================================================
@@ -212,7 +65,7 @@ void FilterGraph::changeListenerCallback (ChangeBroadcaster*)
     changed();
 
     for (int i = activePluginWindows.size(); --i >= 0;)
-        if (! graph.getNodes().contains (activePluginWindows.getUnchecked(i)->owner))
+        if (! graph.getNodes().contains (activePluginWindows.getUnchecked(i)->node))
             activePluginWindows.remove (i);
 }
 
@@ -300,7 +153,7 @@ PluginWindow* FilterGraph::getOrCreateWindowFor (AudioProcessorGraph::Node* node
     jassert (node != nullptr);
 
     for (auto* w : activePluginWindows)
-        if (w->owner == node && w->type == type)
+        if (w->node == node && w->type == type)
             return w;
 
     if (auto* processor = node->getProcessor())
@@ -316,21 +169,10 @@ PluginWindow* FilterGraph::getOrCreateWindowFor (AudioProcessorGraph::Node* node
             }
         }
 
-        if (auto* ui = PluginWindow::createProcessorEditor (*processor, type))
-        {
-            ui->setName (processor->getName());
-            return activePluginWindows.add (new PluginWindow (*this, ui, node, type));
-        }
+        return activePluginWindows.add (new PluginWindow (node, type, activePluginWindows));
     }
 
     return nullptr;
-}
-
-void FilterGraph::closeCurrentlyOpenWindowsFor (const uint32 nodeId)
-{
-    for (int i = activePluginWindows.size(); --i >= 0;)
-        if (activePluginWindows.getUnchecked(i)->owner->nodeId == nodeId)
-            activePluginWindows.remove (i);
 }
 
 bool FilterGraph::closeAnyOpenPluginWindows()

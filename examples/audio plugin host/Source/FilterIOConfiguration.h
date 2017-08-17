@@ -26,15 +26,14 @@
 
 #pragma once
 
-#include "FilterGraph.h"
+class MainHostWindow;
+class GraphDocumentComponent;
 
 
+//==============================================================================
 class FilterIOConfigurationWindow   : public  AudioProcessorEditor
 {
 public:
-    class InputOutputConfig;
-
-    //==============================================================================
     FilterIOConfigurationWindow (AudioProcessor&);
     ~FilterIOConfigurationWindow();
 
@@ -42,16 +41,15 @@ public:
     void paint (Graphics& g) override;
     void resized() override;
 
-    //==============================================================================
-    InputOutputConfig* getConfig (bool isInput) noexcept { return isInput ? inConfig : outConfig; }
-    void update();
-
 private:
-    friend class InputOutputConfig;
+    class InputOutputConfig;
 
     AudioProcessor::BusesLayout currentLayout;
     Label title;
     ScopedPointer<InputOutputConfig> inConfig, outConfig;
+
+    InputOutputConfig* getConfig (bool isInput) noexcept    { return isInput ? inConfig : outConfig; }
+    void update();
 
     MainHostWindow* getMainWindow() const;
     GraphDocumentComponent* getGraphEditor() const;
