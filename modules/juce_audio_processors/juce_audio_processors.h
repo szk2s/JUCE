@@ -55,7 +55,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_basics/juce_audio_basics.h>
-
+#include <unordered_set>
 
 //==============================================================================
 /** Config: JUCE_PLUGINHOST_VST

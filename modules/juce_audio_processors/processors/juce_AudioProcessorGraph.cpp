@@ -963,27 +963,7 @@ bool AudioProcessorGraph::removeNode (Node* node)
 //==============================================================================
 bool AudioProcessorGraph::isConnected (const Connection& c) const noexcept
 {
-    sortConnections();
-
-    size_t s = 0, e = connections.size();
-
-    while (s < e)
-    {
-        if (c == connections[s])
-            return true;
-
-        auto halfway = (s + e) / 2;
-
-        if (halfway == s)
-            break;
-
-        if (c < connections[halfway])
-            e = halfway;
-        else
-            s = halfway;
-    }
-
-    return false;
+    return connections.find (c) != connections.end();
 }
 
 bool AudioProcessorGraph::isConnected (NodeID srcID, NodeID destID) const noexcept
@@ -1025,21 +1005,9 @@ bool AudioProcessorGraph::addConnection (const Connection& c)
     if (! canConnect (c))
         return false;
 
-    if (! (connectionsNeedSorting || connections.empty()))
-        connectionsNeedSorting = (c < connections.back());
-
-    connections.push_back (c);
+    connections.insert (c);
     topologyChanged();
     return true;
-}
-
-void AudioProcessorGraph::sortConnections() const noexcept
-{
-    if (connectionsNeedSorting)
-    {
-        connectionsNeedSorting = false;
-        std::sort (connections.begin(), connections.end());
-    }
 }
 
 bool AudioProcessorGraph::removeConnection (const Connection& c)
@@ -1058,16 +1026,15 @@ bool AudioProcessorGraph::removeConnection (const Connection& c)
 
 bool AudioProcessorGraph::disconnectNode (NodeID nodeID)
 {
-    auto oldSize = connections.size();
-
-    connections.erase (std::remove_if (connections.begin(), connections.end(),
-                                      [nodeID] (const Connection& c) { return c.source.nodeID == nodeID || c.destination.nodeID == nodeID; }),
-                       connections.end());
-
-    if (oldSize != connections.size())
+    for (auto& c : connections)
     {
-        topologyChanged();
-        return true;
+        if (c.source.nodeID == nodeID || c.destination.nodeID == nodeID)
+        {
+            connections.erase (c);
+            topologyChanged();
+            disconnectNode (nodeID); // remove others with recursion as our iterator is now invalid
+            return true;
+        }
     }
 
     return false;
@@ -1087,13 +1054,18 @@ bool AudioProcessorGraph::isConnectionLegal (const Connection& c) const
 
 bool AudioProcessorGraph::removeIllegalConnections()
 {
-    auto oldSize = connections.size();
+    for (auto& c : connections)
+    {
+        if (! isConnectionLegal (c))
+        {
+            connections.erase (c);
+            topologyChanged();
+            removeIllegalConnections(); // remove others with recursion as our iterator is now invalid
+            return true;
+        }
+    }
 
-    connections.erase (std::remove_if (connections.begin(), connections.end(),
-                                      [this] (const Connection& c) { return ! isConnectionLegal (c); }),
-                       connections.end());
-
-    return oldSize != connections.size();
+    return false;
 }
 
 //==============================================================================

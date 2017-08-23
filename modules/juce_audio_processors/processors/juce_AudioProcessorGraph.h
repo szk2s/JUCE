@@ -151,6 +151,12 @@ public:
     };
 
     //==============================================================================
+private:
+    struct HashConnection;
+    typedef std::unordered_set<Connection, HashConnection> ConnectionSet;
+
+public:
+    //==============================================================================
     /** Deletes all nodes and connections from this graph.
         Any processor objects in the graph will be deleted.
     */
@@ -197,9 +203,8 @@ public:
     */
     bool removeNode (Node*);
 
-    //==============================================================================
     /** Returns the list of connections in the graph. */
-    const std::vector<Connection>& getConnections() const noexcept            { sortConnections(); return connections; }
+    const ConnectionSet& getConnections() const noexcept               { return connections; }
 
     /** Returns true if the given connection exists. */
     bool isConnected (const Connection&) const noexcept;
@@ -353,9 +358,20 @@ public:
 
 private:
     //==============================================================================
+    struct HashConnection
+    {
+        size_t operator() (Connection c) const noexcept
+        {
+            auto h = (size_t) c.source.nodeID;
+            h = (h * 255) ^ (size_t) c.destination.nodeID;
+            h = (h * 255) ^ (size_t) c.source.channelIndex;
+            h = (h * 255) ^ (size_t) c.destination.channelIndex;
+            return h;
+        }
+    };
+
     ReferenceCountedArray<Node> nodes;
-    mutable std::vector<Connection> connections;
-    mutable bool connectionsNeedSorting = false;
+    ConnectionSet connections;
     NodeID lastNodeID = {};
 
     struct RenderSequenceFloat;
@@ -367,7 +383,6 @@ private:
 
     bool isPrepared = false;
 
-    void sortConnections() const noexcept;
     void topologyChanged();
     void handleAsyncUpdate() override;
     void clearRenderingSequence();
