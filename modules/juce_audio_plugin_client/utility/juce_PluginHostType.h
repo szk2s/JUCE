@@ -86,7 +86,8 @@ public:
         TracktionGeneric,
         TracktionWaveform,
         VBVSTScanner,
-        WaveBurner
+        WaveBurner,
+        AudioWorklet        
     };
 
     HostType type;
@@ -123,6 +124,7 @@ public:
     bool isWaveBurner() const noexcept        { return type == WaveBurner; }
     bool isWavelab() const noexcept           { return isWavelabLegacy() || type == SteinbergWavelab7 || type == SteinbergWavelab8 || type == SteinbergWavelabGeneric; }
     bool isWavelabLegacy() const noexcept     { return type == SteinbergWavelab5 || type == SteinbergWavelab6; }
+    bool isAudioWorklet() const noexcept      { return type == AudioWorklet; }
 
     //==============================================================================
     const char* getHostDescription() const noexcept
@@ -174,6 +176,7 @@ public:
             case TracktionGeneric:         return "Tracktion";
             case VBVSTScanner:             return "VBVSTScanner";
             case WaveBurner:               return "WaveBurner";
+            case AudioWorklet:             return "AudioWorklet";
             default:                       break;
         }
 
@@ -306,6 +309,9 @@ private:
         if (hostFilename.containsIgnoreCase   ("Tracktion"))         return TracktionGeneric;
         if (hostFilename.startsWith           ("Bitwig"))            return BitwigStudio;
 
+       #elif JUCE_AUDIOWORKLET
+         return AudioWorklet;
+        
        #elif JUCE_IOS
        #elif JUCE_ANDROID
        #else

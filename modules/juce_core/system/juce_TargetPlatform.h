@@ -77,6 +77,8 @@
   #endif
 #elif defined (__FreeBSD__)
   #define       JUCE_BSD 1
+#elif defined (AUDIOWORKLET)
+  #define       JUCE_AUDIOWORKLET 1
 #else
   #error "Unknown platform!"
 #endif

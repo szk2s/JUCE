@@ -1322,7 +1322,8 @@ public:
         wrapperType_AudioUnitv3,
         wrapperType_RTAS,
         wrapperType_AAX,
-        wrapperType_Standalone
+        wrapperType_Standalone,
+        wrapperType_WAM        
     };
 
     /** When loaded by a plugin wrapper, this flag will be set to indicate the type
