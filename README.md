@@ -1,47 +1,14 @@
-# The JUCE 5 Library
+# JUCE 5 (WebAssembly/AudioWorklet version)
 
-**BY DOWNLOADING, INSTALLING OR USING ANY PART OF THE JUCE LIBRARY, YOU AGREE
-TO THE [JUCE 5 END-USER LICENSE AGREEMENT](https://www.juce.com/juce-5-licence)
-AND [JUCE 5 PRIVACY POLICY](https://www.juce.com/juce-5-privacy-policy), WHICH
-ARE BINDING AGREEMENTS BETWEEN YOU AND ROLI, LTD. IF YOU DO NOT AGREE TO THE
-TERMS, DO NOT USE THE JUCE LIBRARY.**
+This repo ports the DSP subsection of JUCE library to WebAssembly (WASM). The port enables JUCE plugins to run in web browsers as Web Audio API AudioWorklets. Precompiled static WASM bitcode library (juce-audioworklet.bc) and its build configuration (Makefile and juce\_lib.cpp) are [here](https://github.com/jariseon/JUCE/tree/master/wasm/lib)
 
-JUCE is an all-encompassing C++ framework for developing cross-platform
-software. JUCE is used by hundreds of companies to develop powerful,
-cross-platform audio, interactive, embedded or graphic applications.
+The port is bundled into two commits. The [first one](https://github.com/jariseon/JUCE/commit/e4b5ed006e3a3bf0a2518d48a8fae164be883e5d) contains modifications to existing JUCE files (mostly just #ifdefs), while the [second one](https://github.com/jariseon/JUCE/commit/5156a5d30fa4aed0eb77fd2a08679282c49920d6) contains build configuration, Web Audio Module (WAM) wrapper code and some dummy overrides for functionality that is unsupported in WASM and AudioWorklet environments (threads and high resolution timer). Porting was surprisingly straight forward.
 
-We now have tier-leveled license terms for JUCE 5, with different terms for
-each available license: JUCE Personal (for developers or startup businesses
-with revenue under 50K USD "Revenue Limit"; free), JUCE Indie (for small
-businesses with under 200K Revenue Limit; $35/month), JUCE Pro (no Revenue
-Limit; $65/month), and JUCE Educational (no Revenue Limit; free for bona fide
-educational institutes). All licenses allow you to commercially release
-applications so long as you do not exceed the Revenue Limit and pay applicable
-Fees. Once your business hits the Revenue Limit for your JUCE license, you will
-either have to upgrade your JUCE license or release your Applications under the
-[GNU General Public License v.3](https://www.gnu.org/licenses/gpl-3.0.en.html),
-which means, among other things, that your code can be freely copied and
-distributed.
+## usage
 
-You agree to give notice to the end-users of your Applications that we may
-track the IP addresses associated with their use of the Applications using JUCE
-solely for our internal purposes in providing JUCE, unless you are a paying
-JUCE customer and opt-out of such tracking. You agree to fully comply with all
-laws, including relating to the collection of information from children and the
-[Children’s Online Privacy Protection Act
-(COPPA)](https://www.ftc.gov/enforcement/rules/rulemaking-regulatory-reform-proceedings/childrens-online-privacy-protection-rule).
+please see this [example](https://github.com/jariseon/webOBXD)
 
-JUCE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY, AND ALL WARRANTIES, WHETHER
-EXPRESSED OR IMPLIED, INCLUDING WARRANTY OF MERCHANTABILITY AND FITNESS FOR A
-PARTICULAR PURPOSE, ARE DISCLAIMED.
+## license
 
-The juce_audio_basics, juce_audio_devices, juce_blocks_basics, juce_core and
-juce_events modules are permissively licensed under the terms of the [ISC
-license](http://www.isc.org/downloads/software-support-policy/isc-license).
+This WASM version of JUCE uses juce\_audio\_basics, juce\_core and juce\_events modules, which are permissively licensed under [ISC](http://www.isc.org/downloads/software-support-policy/isc-license) license. It also uses limited functionality from juce\_audio\_processors and juce\_audio\_plugin\_client modules, which are under JUCE license. Please see the original JUCE [repo] (https://github.com/WeAreROLI/JUCE) for more licensing info.
 
-For more information, visit the website:
-[www.juce.com](https://www.juce.com)
-
-FULL JUCE TERMS:
-- [JUCE 5 END-USER LICENSE AGREEMENT](https://www.juce.com/juce-5-licence)
-- [JUCE 5 PRIVACY POLICY](https://www.juce.com/juce-5-privacy-policy)
