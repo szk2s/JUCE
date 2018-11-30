@@ -1,11 +1,11 @@
 # Web Audio Modules (WAMs)
-# jari kleimola 2017 (jari@webaudiomodules.org)
+# jari kleimola 2017-2018 (jari@webaudiomodules.org)
 # wasm makefile for JUCE AudioWorklet lib
 
 TARGET = juce-audioworklet.bc
 
 SOURCES = juce_lib.cpp
-INC = -I../../../JuceLibraryCode -I../../../JuceLibraryCode/modules
+INC = -I../../modules
 
 Wno = -Wno-inconsistent-missing-override -Wno-deprecated-register -Wno-unused-private-field
 JUCEFLAGS = -DJUCE_STANDALONE_APPLICATION=0 -DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
