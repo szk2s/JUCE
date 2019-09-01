@@ -14,3 +14,6 @@
 #include "../../modules/juce_audio_basics/juce_audio_basics.cpp"
 #include "../../modules/juce_audio_processors/juce_audio_processors.cpp"
 #include "../../modules/juce_audio_plugin_client/utility/juce_PluginUtilities.cpp"
+
+// -- audio devices
+#include "../../modules/juce_audio_devices/juce_audio_devices.cpp"
